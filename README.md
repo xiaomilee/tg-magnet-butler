@@ -51,6 +51,9 @@ Telegram ──(长轮询)──▶ 机器人
 
 ### 2.1 打好的包直接装
 
+不想自己打包就去 [Releases](https://github.com/xiaomilee/tg-magnet-butler/releases) 下载对应版本的
+`tgmagnet_<版本>_x86.fpk`；要从源码出包：
+
 ```bash
 ./build.sh                 # 产出 dist/tgmagnet_<manifest 里的版本>_x86.fpk
 ```
@@ -469,6 +472,7 @@ tg-magnet-butler/
 ## 8. 本地开发
 
 ```bash
+git clone https://github.com/xiaomilee/tg-magnet-butler.git && cd tg-magnet-butler
 make dev                      # 起服务，数据在 ./.dev
 TMB_MOCK=1 make dev           # 离线演示模式，检索返回假数据
 python app/main.py --env .dev --once "求个番剧 某某 1080p" --no-auto
