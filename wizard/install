@@ -1,0 +1,42 @@
+[
+  {
+    "stepTitle": "Telegram 机器人",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_bot_token",
+        "label": "Bot Token（@BotFather 获取，可留空稍后在面板填写）",
+        "initValue": ""
+      },
+      {
+        "type": "text",
+        "field": "wizard_chat_ids",
+        "label": "允许的 chat_id（逗号分隔，留空不限制）",
+        "initValue": ""
+      }
+    ]
+  },
+  {
+    "stepTitle": "下载通道",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_download_backend",
+        "label": "主用下载后端：xunlei / aria2 / qbittorrent / none",
+        "initValue": "xunlei"
+      },
+      {
+        "type": "text",
+        "field": "wizard_xunlei_mode",
+        "label": "迅雷接入模式：panel（2345 面板）/ fnos_gateway（官方 App 网关）",
+        "initValue": "panel"
+      },
+      {
+        "type": "text",
+        "field": "wizard_pan_auth",
+        "label": "迅雷 pan_auth 令牌（可留空，稍后在面板填写）",
+        "initValue": ""
+      }
+    ]
+  }
+]

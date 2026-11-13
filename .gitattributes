@@ -1,0 +1,9 @@
+# 源码统一 LF：前端文件混进 CRLF 会被 tests/test_ui_markup.py 抓出来
+* text=auto eol=lf
+
+# 二进制
+*.fpk binary
+*.png binary
+*.PNG binary
+*.ico binary
+*.jpg binary

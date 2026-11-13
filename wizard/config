@@ -1,0 +1,36 @@
+[
+  {
+    "stepTitle": "Telegram",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_bot_token",
+        "label": "Bot Token（留空表示不修改）",
+        "initValue": ""
+      },
+      {
+        "type": "text",
+        "field": "wizard_chat_ids",
+        "label": "允许的 chat_id（逗号分隔，留空不修改）",
+        "initValue": ""
+      }
+    ]
+  },
+  {
+    "stepTitle": "下载",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_download_backend",
+        "label": "主用后端：xunlei / aria2 / qbittorrent / none（留空不修改）",
+        "initValue": ""
+      },
+      {
+        "type": "text",
+        "field": "wizard_pan_auth",
+        "label": "迅雷 pan_auth（留空不修改）",
+        "initValue": ""
+      }
+    ]
+  }
+]

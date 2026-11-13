@@ -1,0 +1,4 @@
+#!/bin/bash
+# 配置向导前
+set -u
+exit 0

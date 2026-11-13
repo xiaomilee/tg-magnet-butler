@@ -1,0 +1,36 @@
+#!/bin/bash
+# 安装前检查
+set -u
+export PATH="/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
+
+APPNAME="tgmagnet"
+PKGVAR="${TRIM_PKGVAR:-/var/apps/${APPNAME}/var}"
+PKGETC="${TRIM_PKGETC:-/var/apps/${APPNAME}/etc}"
+
+mkdir -p "${PKGVAR}/logs" "${PKGETC}" 2>/dev/null
+
+PY=""
+if [ -n "${TMB_PYTHON:-}" ] && [ -x "${TMB_PYTHON}" ]; then
+  PY="${TMB_PYTHON}"
+fi
+if [ -z "${PY}" ]; then
+  for c in /usr/bin/python3 /usr/local/bin/python3 /bin/python3; do
+    if [ -x "$c" ]; then PY="$c"; break; fi
+  done
+fi
+if [ -z "${PY}" ] && command -v python3 >/dev/null 2>&1; then
+  PY="$(command -v python3)"
+fi
+if [ -z "${PY}" ]; then
+  echo "未找到 python3，无法运行磁力管家（fnOS 系统应自带 /usr/bin/python3）"
+  exit 1
+fi
+
+# fnOS 自带 python3 版本需 >= 3.8
+if ! "${PY}" -c 'import sys; sys.exit(0 if sys.version_info>=(3,8) else 1)'; then
+  echo "python3 版本过低：$("${PY}" -V 2>&1)"
+  exit 1
+fi
+
+echo "环境检查通过：${PY} $(${PY} -V 2>&1)"
+exit 0

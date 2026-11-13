@@ -1,0 +1,24 @@
+#!/bin/bash
+# 安装后：把安装向导填的参数写进 config.json
+set -u
+export PATH="/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
+
+APPNAME="tgmagnet"
+APPDEST="${TRIM_APPDEST:-/var/apps/${APPNAME}/target}"
+PKGVAR="${TRIM_PKGVAR:-/var/apps/${APPNAME}/var}"
+PKGETC="${TRIM_PKGETC:-/var/apps/${APPNAME}/etc}"
+
+mkdir -p "${PKGVAR}/logs" "${PKGETC}" 2>/dev/null
+
+PY="/usr/bin/python3"
+[ -x "$PY" ] || PY="$(command -v python3)"
+
+if [ -f "${APPDEST}/wizard_apply.py" ] && [ -n "${PY}" ]; then
+  "${PY}" "${APPDEST}/wizard_apply.py" "${PKGETC}" "${PKGVAR}" || echo "向导参数写入失败，可在面板里手动填写"
+fi
+
+chmod 600 "${PKGETC}/config.json" 2>/dev/null
+chmod 644 "${PKGETC}/rules.json" 2>/dev/null
+
+echo "磁力管家安装完成，管理面板端口 8470"
+exit 0

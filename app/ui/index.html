@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0e121b" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="format-detection" content="telephone=no" />
+<title>磁力管家 · 关键词分拣</title>
+<link rel="icon" href="images/icon-64.png" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="app" id="app">
+  <div class="nav-shade" id="navShade" hidden></div>
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <img src="images/icon-64.png" alt="" />
+      <div>
+        <h1>磁力管家</h1>
+        <p id="brandVersion">v1.0.0</p>
+      </div>
+      <button class="nav-close" id="navClose" aria-label="收起菜单">✕</button>
+    </div>
+
+    <!-- 抽屉里是全部页面（底部只有概览/搜索两格，其余都从这里进） -->
+    <nav>
+      <button class="nav-item active" data-tab="overview"><span>◈</span>概览</button>
+      <button class="nav-item" data-tab="rules"><span>⌘</span>关键词规则</button>
+      <button class="nav-item" data-tab="search"><span>⌕</span>搜索测试</button>
+      <button class="nav-item" data-tab="library"><span>▤</span>历史字典</button>
+      <button class="nav-item" data-tab="download"><span>⇩</span>下载与迅雷</button>
+      <button class="nav-item" data-tab="settings"><span>⚙</span>设置</button>
+      <button class="nav-item" data-tab="logs"><span>≡</span>运行日志</button>
+    </nav>
+
+    <div class="side-foot">
+      <div class="status-line"><span id="botDot" class="dot"></span><span id="botLabel">未连接</span></div>
+      <div class="hint" id="sideHint">Telegram 机器人</div>
+      <!-- 手机上抽屉是唯一能点到这些开关的地方，所以放一份在这里 -->
+      <div class="side-actions">
+        <button class="btn ghost sm" id="sidePause">暂停机器人</button>
+        <button class="btn ghost sm" id="sideReload">刷新状态</button>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <header class="topbar" id="topbar">
+      <button class="nav-toggle" id="navToggle" aria-label="打开菜单" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+      <div class="topbar-title">
+        <h2 id="pageTitle">概览</h2>
+        <p id="pageDesc">转发给机器人的消息，自动分拣关键词 → 检索 sukebei → 投递迅雷</p>
+      </div>
+      <div class="top-actions">
+        <span class="pill" id="pillToken" hidden title=""></span>
+        <span class="pill" id="pillBackend">下载后端 —</span>
+        <button class="btn ghost top-reload" id="btnReload" title="刷新状态">
+          <span class="ico">⟳</span><span class="txt">刷新</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- ============ 概览 ============ -->
+    <section id="tab-overview" class="tab active">
+      <div class="cards">
+        <div class="stat-card">
+          <div class="stat-label">机器人</div>
+          <div class="stat-value" id="statBot">—</div>
+          <div class="stat-sub" id="statBotSub">未配置 token</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">今日投递</div>
+          <div class="stat-value" id="statToday">0</div>
+          <div class="stat-sub" id="statTotal">累计 0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">下载后端</div>
+          <div class="stat-value" id="statBackend">—</div>
+          <div class="stat-sub" id="statBackendSub">连接状态 —</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">关键词规则</div>
+          <div class="stat-value" id="statRules">0</div>
+          <div class="stat-sub" id="statUptime">运行 —</div>
+        </div>
+      </div>
+
+      <div class="card quick">
+        <div class="card-head">
+          <h3>快捷开关</h3>
+          <span class="muted small" id="quickHint"></span>
+        </div>
+        <p class="muted small">这里改完立刻生效，不用再去设置页找。</p>
+        <div class="quick-grid">
+          <label class="switch-field">
+            <span>自动投递<em>收到就下；关掉只回结果</em></span>
+            <input id="qAuto" type="checkbox" class="switch" />
+          </label>
+          <label class="switch-field">
+            <span>检索前查字典<em>下过的先提醒你</em></span>
+            <input id="qLibCheck" type="checkbox" class="switch" />
+          </label>
+          <label class="switch-field">
+            <span>跳过已下载<em>命中就不重复投递</em></span>
+            <input id="qLibSkip" type="checkbox" class="switch" />
+          </label>
+          <div class="switch-field">
+            <span>机器人<em id="qBotState">轮询中</em></span>
+            <button class="btn ghost sm" id="qBotPause">暂停</button>
+          </div>
+          <!-- 下载页收起来了，连没连上、要不要重连都放在这一格解决 -->
+          <div class="switch-field">
+            <span>迅雷<em id="qXlState">侦测中</em></span>
+            <button class="btn ghost sm" id="qXlReconnect" title="重新侦测本机迅雷网关并复测">立即重连</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head hist-head">
+          <h3>最近投递</h3>
+          <div class="row-actions">
+            <button class="btn ghost sm" id="btnHistAll" title="勾上本页全部记录（没有磁力的会跳过）">全选</button>
+            <button class="btn ghost sm" id="btnHistCopySel" disabled
+                    title="先勾选几条，再点这里一次复制它们的磁力链接；一行一条，粘到迅雷套件的添加入口就能逐条加">复制所选</button>
+            <button class="btn ghost sm" id="btnHistClear" title="只是把这张表清空，数据库里的记录一条都不删">清除</button>
+          </div>
+        </div>
+        <p class="muted small hist-hint" id="historyHint"></p>
+        <div class="table-wrap">
+          <table class="table" id="historyTable">
+            <thead><tr>
+              <th class="pick">选</th>
+              <th>时间</th><th>标题</th><th>后端</th><th>任务号</th><th>状态</th>
+              <th class="copy-col">磁力</th>
+            </tr></thead>
+            <tbody><tr class="empty-row"><td colspan="7" class="empty">暂无记录</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>怎么用</h3></div>
+        <ol class="steps">
+          <li>在 <b>设置</b> 里填 Telegram Bot Token，保存后点「重连机器人」。</li>
+          <li>迅雷不用配：启动时自己找飞牛官方套件，连没连上看上面「下载后端」，断了就在快捷开关里点<b>立即重连</b>。</li>
+          <li>给机器人发消息或转发消息：<code>求 某剧 1080p 中字</code>。</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ============ 规则 ============ -->
+    <section id="tab-rules" class="tab">
+      <div class="card">
+        <div class="card-head">
+          <h3>分拣规则</h3>
+          <div class="row-actions">
+            <button class="btn ghost" id="btnRuleJson">JSON 编辑</button>
+            <button class="btn ghost" id="btnRuleAdd">新增规则</button>
+            <button class="btn" id="btnRuleSave">保存规则</button>
+          </div>
+        </div>
+        <p class="muted small">命中词支持中文子串匹配；多条命中时取分值最高的一条。勾掉「启用」可临时禁用。</p>
+        <div id="rulesList" class="rules"></div>
+      </div>
+
+      <div class="card" id="ruleJsonCard" style="display:none">
+        <div class="card-head">
+          <h3>rules.json</h3>
+          <div class="row-actions">
+            <button class="btn ghost" id="btnRuleJsonFormat">格式化</button>
+            <button class="btn" id="btnRuleJsonSave"
+              data-confirm="保存后会整份覆盖当前规则（页面上这些卡片也会跟着重置），确定写入？">保存 JSON</button>
+          </div>
+        </div>
+        <textarea id="ruleJsonArea" class="code" spellcheck="false"></textarea>
+        <p class="muted small">整份 rules.json 会直接落盘，形如 {"version":1,"default":{...},"rules":[...]}。</p>
+      </div>
+    </section>
+
+    <!-- ============ 搜索测试 ============ -->
+    <section id="tab-search" class="tab">
+      <div class="card">
+        <!-- 主输入区：大输入框 + 右边两个动作（直接搜 / 先解析再搜），条件都收进下面的「更多选项」 -->
+        <div class="search-hero">
+          <textarea id="sQuery" rows="3" spellcheck="false" autocomplete="off" autocapitalize="off"
+            placeholder="粘一段消息、一条磁力链接，或只输关键词&#10;例：FC2PPV-1234567 / 作品名 1080p 中字&#10;磁力会直接解析文件清单，不用再搜"></textarea>
+          <div class="search-acts">
+            <button class="btn search-go" id="btnSearch" type="button">直接搜索</button>
+            <button class="btn ghost search-parse" id="btnParseSearch" type="button"
+              title="先按机器人的判定解析这段消息，再用解析出的查询检索">解析后搜</button>
+          </div>
+          <div class="sq-tools">
+            <button class="btn ghost sm" id="btnPaste" type="button" title="把剪贴板里的文字填进来">粘贴</button>
+            <button class="btn ghost sm" id="btnClearQuery" type="button" hidden>清空</button>
+            <span class="sq-tip"><span id="sqTipText">回车即搜</span><span
+                class="sq-tip-x"> · Shift+回车换行</span></span>
+          </div>
+        </div>
+        <!-- 解析结果：解析后搜才会出现，判定、查询串、命中规则、磁力都摆在这里 -->
+        <div id="parseBox" class="parse-box" hidden></div>
+        <div id="searchMeta" class="search-meta"></div>
+
+        <!-- 不常用的检索条件：默认收起，标题上直接写清「现在用的是哪套条件」 -->
+        <details class="adv" id="searchAdv">
+          <summary>
+            <span class="adv-arrow" aria-hidden="true"></span>
+            <span>更多选项</span>
+            <span class="adv-sum" id="sAdvSummary"></span>
+          </summary>
+          <div class="adv-body">
+            <div class="form-grid">
+              <label class="field">
+                <span>分类</span>
+                <select id="sCategory">
+                  <option value="0_0">全部</option>
+                  <option value="1_1">Art - Anime</option>
+                  <option value="1_2">Art - Doujinshi</option>
+                  <option value="1_3">Art - Games</option>
+                  <option value="1_4">Art - Manga</option>
+                  <option value="1_5">Art - Pictures</option>
+                  <option value="2_1">Real Life - Pictures</option>
+                  <option value="2_2">Real Life - Videos</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>排序</span>
+                <select id="sSort">
+                  <option value="seeders">做种数</option>
+                  <option value="downloads">下载量</option>
+                  <option value="date">发布时间</option>
+                  <option value="size">体积</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>最少做种</span>
+                <input id="sSeeders" type="number" value="1" min="0" />
+              </label>
+              <label class="field">
+                <span>条数</span>
+                <input id="sLimit" type="number" value="10" min="1" max="50" />
+              </label>
+            </div>
+            <div class="row-actions adv-actions">
+              <button class="btn ghost" id="btnNyaaProbe" type="button">测试站点连通</button>
+              <button class="btn ghost" id="btnDiag" type="button">网络诊断</button>
+            </div>
+          </div>
+        </details>
+        <pre id="diagOut" class="diag-out" hidden></pre>
+      </div>
+      <div id="searchResults" class="results"></div>
+    </section>
+
+    <!-- ============ 下载 ============ -->
+    <section id="tab-download" class="tab">
+      <div class="card">
+        <div class="card-head">
+          <h3>下载通道</h3>
+          <div class="row-actions">
+            <button class="btn ghost" id="btnDlProbe">测试连接</button>
+            <button class="btn" id="btnDlSave">保存</button>
+          </div>
+        </div>
+        <div class="form-grid">
+          <label class="field">
+            <span>主用后端</span>
+            <select id="dBackend">
+              <option value="xunlei">迅雷</option>
+              <option value="aria2">aria2</option>
+              <option value="qbittorrent">qBittorrent</option>
+              <option value="none">不自动下载（只回传磁力）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>兜底顺序</span>
+            <input id="dFallback" placeholder="aria2,qbittorrent" />
+          </label>
+          <label class="field switch-field">
+            <span>收到消息自动投递</span>
+            <input id="dAuto" type="checkbox" class="switch" />
+          </label>
+          <label class="field">
+            <span>自动投递第几名</span>
+            <input id="dAutoPick" type="number" min="1" max="10" />
+          </label>
+        </div>
+        <p class="muted small">
+          关掉「自动投递」后：普通消息照常检索、只回结果列表；消息里自带磁力的，也只回「⬇️ 投递」按钮。
+          两种都不再往迅雷里加任务，点按钮才下。</p>
+        <div id="xProbeOut" class="probe-out"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>迅雷</h3>
+          <div class="row-actions">
+            <span class="badge">飞牛官方套件</span>
+            <span class="small muted" id="xConnState">连接状态：启动时自动侦测</span>
+            <button class="btn ghost" id="btnXlReconnect"
+              data-confirm="会重新侦测本机迅雷，并把端口与令牌写进配置（手填值可能被覆盖）。继续？">立即重连</button>
+          </div>
+        </div>
+        <p class="muted small">
+          只接飞牛应用中心里的官方「迅雷」：启动时会自己侦测网关端口、复用当前飞牛登录态，
+          不需要选模式或填端口；连不上就点「立即重连」。</p>
+        <div class="form-grid">
+          <label class="field wide"><span>pan_auth 令牌<em>只填 JWT 本身（形如 eyJ…）；粘成整条 device/info/watch 地址也没关系，保存时会自动掐出里面那段</em></span><input id="xPanAuth" type="password" placeholder="自动侦测会尽量帮你抓；抓不到再手填"/></label>
+          <label class="field wide"><span>fnos-token（从飞牛登录态自动获取）</span><input id="xFnToken" type="password" /></label>
+          <label class="field"><span>设备空间 target</span><input id="xTarget" placeholder="留空自动解析"/></label>
+          <label class="field"><span>下载目录 id</span><input id="xFolder" placeholder="留空 = 迅雷默认目录"/></label>
+          <div class="field wide file-filter" id="xFilterBox">
+            <label class="switch-field ff-on">
+              <span>文件筛选<em>对自动投递、点「下载」补投、直接发磁力链接都生效；关掉 = 多文件种子一律全下</em></span>
+              <input id="xFOn" type="checkbox" class="switch" />
+            </label>
+            <div class="ff-head">
+              <b>筛选条件</b>
+              <span class="small muted" id="xFilterState"></span>
+            </div>
+            <div class="ff-cats">
+              <label class="chip-check"><input id="xFVideo" type="checkbox" /><span>视频</span></label>
+              <label class="chip-check"><input id="xFSubtitle" type="checkbox" /><span>字幕</span></label>
+              <label class="chip-check"><input id="xFImage" type="checkbox" /><span>图片</span></label>
+              <label class="chip-check"><input id="xFDoc" type="checkbox" /><span>说明</span></label>
+              <label class="chip-check"><input id="xFArchive" type="checkbox" /><span>压缩包</span></label>
+              <label class="chip-check"><input id="xFOther" type="checkbox" /><span>其他</span></label>
+            </div>
+            <div class="form-grid ff-grid">
+              <label class="field"><span>最小 <em>MB</em>（0 = 不限）</span>
+                <input id="xFMin" type="number" min="0" step="10" /></label>
+              <label class="field"><span>最大 <em>MB</em>（0 = 不限）</span>
+                <input id="xFMax" type="number" min="0" step="100" /></label>
+              <label class="field"><span>名称包含</span>
+                <input id="xFInclude" placeholder="逗号分隔；留空不限" /></label>
+              <label class="field"><span>名称排除</span>
+                <input id="xFExclude" placeholder="sample,trailer,预览" /></label>
+            </div>
+            <label class="switch-field ff-sub">
+              <span>字幕和说明不受大小限制<em>字幕天生几十 KB，按 100 MB 筛会被全删</em></span>
+              <input id="xFSubExempt" type="checkbox" class="switch" />
+            </label>
+            <p class="muted small" id="xFHint"></p>
+          </div>
+          <label class="field switch-field"><span>令牌失效时自动重抓并重试</span><input id="xAutoRefresh" type="checkbox" class="switch" /></label>
+          <label class="field switch-field"><span>目录 id 无效时改用默认目录</span><input id="xFbFolder" type="checkbox" class="switch" /></label>
+        </div>
+        <div class="row-actions" style="margin-top:10px">
+          <button class="btn ghost" id="btnXlFolder"
+            data-confirm="会把找到的目录 id 直接写进设置（当前填写的目录会被替换）。继续？">从已有任务找下载目录</button>
+          <span class="muted small">读迅雷任务列表里它自己写过的目录 id；点一下即写入设置，也可只看不填</span>
+        </div>
+        <div id="xFoldOut" class="probe-out"></div>
+        <p class="muted small" id="xTokenMeta">令牌来源：—</p>
+        <p class="muted small">投递报 <code>invalid token</code> 时，先点<b>测试连接</b>：它会对网关做一次对比，
+          直接告诉你是 <code>fnos-token</code> 还是 <code>pan_auth</code> 的问题，别再盲目重登飞牛。
+          网关模式下，从飞牛桌面点开本面板会把浏览器的 fnos-token 写进配置（只在网关模式写），
+          Telegram 那条路径也就能用上新令牌了。</p>
+        <p class="muted small">报 <code>parent folder not found</code> 是「下载目录 id」对不上（换设备、重装迅雷、
+          目录被删，或把路径填进了 id）：<b>留空就是迅雷默认下载目录</b>；要指定目录，在迅雷面板的文件列表里选中目录，
+          从地址栏 <code>parent_folder_id=</code> 后面复制那串 id。
+          开着下面的开关时，投递撞到目录类错误会改用默认目录继续，但不会改动你填的设置。</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>aria2</h3></div>
+        <div class="form-grid">
+          <label class="field wide"><span>RPC 地址</span><input id="aUrl" placeholder="http://127.0.0.1:6800/jsonrpc"/></label>
+          <label class="field"><span>密钥</span><input id="aSecret" type="password"/></label>
+          <label class="field"><span>下载目录</span><input id="aDir" placeholder="/vol1/downloads"/></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>qBittorrent</h3><span class="badge">内网自动直连</span></div>
+        <div class="form-grid">
+          <label class="field wide"><span>地址</span><input id="qUrl" placeholder="http://127.0.0.1:8080"/></label>
+          <label class="field"><span>用户名</span><input id="qUser"/></label>
+          <label class="field"><span>密码</span><input id="qPass" type="password"/></label>
+          <label class="field"><span>保存路径</span><input id="qPath" placeholder="留空用默认"/></label>
+          <label class="field"><span>分类</span><input id="qCat"/></label>
+          <label class="field"><span>标签</span><input id="qTags" placeholder="可留空"/></label>
+          <label class="field switch-field"><span>添加后暂停</span><input id="qPaused" type="checkbox" class="switch" /></label>
+          <label class="field wide"><span>代理（可选）</span><input id="qProxy" placeholder="本机/内网地址会自动跳过代理，留空即可"/></label>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 历史字典 ============ -->
+    <section id="tab-library" class="tab">
+      <div class="cards">
+        <div class="stat-card">
+          <div class="stat-label">字典条目</div>
+          <div class="stat-value" id="libTotal">0</div>
+          <div class="stat-sub" id="libTotalSub">存在 0 · 已删除 0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">已删除（记录保留）</div>
+          <div class="stat-value" id="libGone">0</div>
+          <div class="stat-sub" id="libGoneSub">上次分析 —</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">疑似重复</div>
+          <div class="stat-value" id="libDupCount">—</div>
+          <div class="stat-sub">点下方「分析重复」</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">命中后</div>
+          <div class="stat-value" id="libPolicy" style="font-size:16px">提示 + 存在/已删都跳过投递</div>
+          <div class="stat-sub">发 <code>/force 关键词</code> 可强制重下</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>监控目录</h3>
+          <div class="row-actions">
+            <button class="btn ghost" id="btnLibSave">保存目录</button>
+            <button class="btn" id="btnLibScan">开始分析</button>
+          </div>
+        </div>
+        <div class="form-grid">
+          <label class="field wide">
+            <span>目录（一行一个，例如 /vol1/1000/Downloads）</span>
+            <textarea id="libRoots" class="code" rows="4" spellcheck="false"
+              placeholder="/vol1/1000/Downloads&#10;/vol2/1000/影视"></textarea>
+          </label>
+          <label class="field"><span>分析深度（子目录层数）</span>
+            <input id="libDepth" type="number" min="1" max="10" /></label>
+          <label class="field"><span>最多记录条目</span>
+            <input id="libMax" type="number" min="100" max="200000" /></label>
+          <label class="field switch-field"><span>连文件一起记（不只文件夹）</span>
+            <input id="libFiles" class="switch" type="checkbox" /></label>
+          <label class="field switch-field"><span>检索前先查字典</span>
+            <input id="libCheck" class="switch" type="checkbox" /></label>
+          <label class="field switch-field"><span>命中「已存在」就不投递</span>
+            <input id="libSkip" class="switch" type="checkbox" /></label>
+          <label class="field switch-field"><span>命中「曾存在已删」也不投递</span>
+            <input id="libSkipDeleted" class="switch" type="checkbox" /></label>
+        </div>
+        <p class="muted small">分析只做快照对比：不会删任何记录。文件消失时记下「发现时间」，
+          条目永久保留，之后搜索能告诉你「曾经有过、什么时候没的」。目录整体读不到时不会误标删除。
+          被拦下时发 <code>/force 关键词</code> 可强制继续。</p>
+        <pre id="libOut" class="logbox" style="display:none;margin-top:14px"></pre>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>查一查：这个是不是下过</h3>
+          <div class="row-actions"><button class="btn" id="btnLibLookup">查询</button></div>
+        </div>
+        <div class="form-grid">
+          <label class="field wide"><span>关键词 / 一段消息</span>
+            <input id="libQuery" placeholder="FC2PPV-4999948　或　某作品 1080p" /></label>
+        </div>
+        <div class="table-wrap" style="margin-top:14px">
+          <table class="table" id="libLookTable">
+            <thead><tr><th>状态</th><th>名称</th><th>路径</th><th>发现删除时间</th></tr></thead>
+            <tbody><tr><td colspan="4" class="empty">还没有查询</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>疑似重复</h3>
+          <div class="row-actions"><button class="btn ghost" id="btnLibDup">分析重复</button></div>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="libDupTable">
+            <thead><tr><th>名称</th><th>份数</th><th>单份</th><th>可能白占</th><th>判断</th></tr></thead>
+            <tbody><tr><td colspan="5" class="empty">点「分析重复」开始</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>字典明细</h3>
+          <div class="row-actions">
+            <select id="libFilter">
+              <option value="">全部</option>
+              <option value="present">存在</option>
+              <option value="deleted">已删除</option>
+            </select>
+            <button class="btn ghost" id="btnLibRefresh">刷新</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="libItemTable">
+            <thead><tr><th>状态</th><th>名称</th><th>体积</th><th>首次记录</th><th>发现删除</th></tr></thead>
+            <tbody><tr><td colspan="5" class="empty">暂无记录，先点「开始分析」</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 设置 ============ -->
+    <section id="tab-settings" class="tab">
+      <div class="card">
+        <div class="card-head">
+          <h3>Telegram</h3>
+          <div class="row-actions">
+            <button class="btn ghost" id="btnBotRestart"
+              data-confirm="会保存当前配置并重启 Telegram 轮询，正在处理中的消息可能要重发。继续？">重连机器人</button>
+            <button class="btn" id="btnCfgSave">保存</button>
+          </div>
+        </div>
+        <div class="form-grid">
+          <label class="field wide"><span>Bot Token</span><input id="tToken" type="password" placeholder="123456:ABC..."/></label>
+          <label class="field wide"><span>允许的 chat_id（逗号分隔，留空不限制）</span><input id="tChats" placeholder="123456789"/></label>
+          <label class="field wide"><span>管理员 user_id（逗号分隔）</span><input id="tAdmins"/></label>
+          <label class="field"><span>轮询超时（秒）</span><input id="tPoll" type="number"/></label>
+        </div>
+        <p class="muted small">第一次用：把机器人拉进会话或直接私聊，发送 <code>/id</code> 就能看到 chat_id。</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>站点与去重</h3></div>
+        <div class="form-grid">
+          <label class="field wide"><span>sukebei 地址</span><input id="nBase"/></label>
+          <label class="field"><span>请求超时（秒）</span><input id="nTimeout" type="number"/></label>
+          <label class="field"><span>去重天数</span><input id="cDedupe" type="number"/></label>
+          <label class="field"><span>日志级别</span>
+            <select id="cLogLevel">
+              <option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option>
+            </select>
+          </label>
+          <label class="field"><span>面板访问口令（留空表示不校验）</span><input id="cToken" type="password"/></label>
+        </div>
+      </div>
+
+      <!-- 代理就一处：一条一行地填，从上往下试，不分主备。
+           Telegram 与检索站共用这一份地址表——以前要在 Telegram 卡、站点卡、
+           通道表三个地方各填一遍，同一台 Clash 得填两三次。 -->
+      <div class="card">
+        <div class="card-head ch-head">
+          <h3>代理</h3>
+          <div class="row-actions">
+            <span class="muted small" id="pcState">—</span>
+            <button class="btn ghost sm" id="btnPcTest" title="逐条测一遍：正在用的那条还通就继续用，断了才换">测速并切换</button>
+          </div>
+        </div>
+        <p class="muted small">一行一个地址，<b>从上往下试</b>，这条不通就自动换下一条；全都不通才走直连。
+          线路之间<b>互为备胎</b>：正在用的那条只要还通就不换。Telegram 和检索站共用这一份，
+          内网/本机地址永远直连，不进这个队列。</p>
+        <label class="field wide"><span>线路<em id="pcCount">一行一条，空着就是直连</em></span>
+          <textarea id="pcAll" class="code-lines" rows="3" spellcheck="false" autocomplete="off"
+            placeholder="http://192.168.1.11:7890&#10;http://192.168.1.10:7897"></textarea></label>
+        <div id="pcList" class="ch-list line-list"></div>
+        <div class="pc-foot">
+          <label class="switch-field">
+            <span>自动切换<em>后台每 3 分钟测一次：还通就继续用，断了才换；不动你填的配置</em></span>
+            <input id="pcAuto" type="checkbox" class="switch"/>
+          </label>
+          <span class="ch-res pc-out" id="pcTestOut"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 日志 ============ -->
+    <section id="tab-logs" class="tab">
+      <div class="card">
+        <div class="card-head">
+          <h3>运行日志</h3>
+          <div class="row-actions">
+            <button class="btn ghost" id="btnLogAuto">自动刷新：开</button>
+            <button class="btn ghost" id="btnLogClear">清屏</button>
+          </div>
+        </div>
+        <pre id="logBox" class="logbox">加载中…</pre>
+      </div>
+    </section>
+  </main>
+
+  <!-- 手机上用底部导航：只放最常用的两格；规则/下载/字典/设置/日志都在左上角抽屉里 -->
+  <nav class="tabbar" id="tabbar" aria-label="页面导航">
+    <button class="tabbar-item active" data-tab="overview"><span>◈</span>概览</button>
+    <button class="tabbar-item" data-tab="search"><span>⌕</span>搜索</button>
+  </nav>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<!-- 有没保存的改动时浮出来：手机上一路滑到页底也能直接存，不用滚回卡片顶部找按钮 -->
+<div class="savebar" id="saveBar" hidden>
+  <span id="saveBarText">还有改动没保存</span>
+  <button class="btn ghost sm" id="saveBarDiscard">放弃</button>
+  <button class="btn sm" id="saveBarSave">保存</button>
+</div>
+
+<!-- 二次确认：会覆盖配置/规则的动作用它拦一下，避免手机上误点就生效 -->
+<div class="modal" id="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <h3 id="modalTitle">确认操作</h3>
+    <p id="modalText"></p>
+    <div class="modal-actions">
+      <button class="btn ghost" id="modalCancel">取消</button>
+      <button class="btn danger-solid" id="modalOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

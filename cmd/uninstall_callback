@@ -1,0 +1,7 @@
+#!/bin/bash
+# 卸载后：保留用户数据（配置与投递记录）以便重装后续用
+set -u
+APPNAME="tgmagnet"
+PKGVAR="${TRIM_PKGVAR:-/var/apps/${APPNAME}/var}"
+echo "已卸载。配置文件与投递记录仍保留在 ${PKGVAR}，如需彻底清理请手动删除。"
+exit 0

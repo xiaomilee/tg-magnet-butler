@@ -1,0 +1,148 @@
+#!/bin/bash
+# 磁力管家 · 生命周期主脚本（fnOS 调用：main start|stop|status|restart）
+set -u
+
+export PATH="/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
+export TZ="${TZ:-Asia/Shanghai}"
+
+APPNAME="tgmagnet"
+APPDEST="${TRIM_APPDEST:-/var/apps/${APPNAME}/target}"
+PKGVAR="${TRIM_PKGVAR:-/var/apps/${APPNAME}/var}"
+PKGETC="${TRIM_PKGETC:-/var/apps/${APPNAME}/etc}"
+
+PIDFILE="${PKGVAR}/tmb.pid"
+STDOUT_LOG="${PKGVAR}/logs/stdout.log"
+
+mkdir -p "${PKGVAR}/logs" "${PKGETC}" 2>/dev/null
+
+find_python() {
+  local c
+  # 特殊情况（自编译 Python / 非标准路径）可用 TMB_PYTHON 指定解释器
+  if [ -n "${TMB_PYTHON:-}" ] && [ -x "${TMB_PYTHON}" ]; then
+    echo "${TMB_PYTHON}"; return 0
+  fi
+  for c in /usr/bin/python3 /usr/local/bin/python3 /bin/python3; do
+    if [ -x "$c" ]; then echo "$c"; return 0; fi
+  done
+  if command -v python3 >/dev/null 2>&1; then command -v python3; return 0; fi
+  return 1
+}
+
+is_running() {
+  if [ -f "${PIDFILE}" ]; then
+    local pid
+    pid="$(cat "${PIDFILE}" 2>/dev/null)"
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+rotate_log() {
+  if [ -f "${STDOUT_LOG}" ]; then
+    local size
+    size="$(stat -c%s "${STDOUT_LOG}" 2>/dev/null || echo 0)"
+    if [ "${size:-0}" -gt 5242880 ]; then
+      mv -f "${STDOUT_LOG}" "${STDOUT_LOG}.1" 2>/dev/null
+    fi
+  fi
+}
+
+# 只收「同一个安装目录下的 main.py」这批进程，路径精确匹配，不碰别的 python。
+# pid 文件是唯一记录：它丢了（非正常退出、升级时被覆盖）进程却还在，就会出现
+# 两个实例抢同一个 Bot Token（Telegram 回 HTTP 409），消息也被随机分掉。
+kill_orphans() {
+  local keep="$1" d p cmd n=0
+  for d in /proc/[0-9]*; do
+    [ -r "$d/cmdline" ] || continue
+    p="${d#/proc/}"
+    [ "$p" = "$$" ] && continue
+    [ -n "${keep}" ] && [ "$p" = "${keep}" ] && continue
+    cmd="$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)"
+    case "${cmd}" in
+      *"${APPDEST}/main.py"*)
+        if kill -TERM "$p" 2>/dev/null; then
+          n=$((n + 1))
+          echo "已停掉残留进程 $p"
+        fi
+        ;;
+    esac
+  done
+  if [ "$n" -gt 0 ]; then sleep 2; fi
+  return 0
+}
+
+do_start() {
+  if is_running; then
+    echo "already running (pid $(cat "${PIDFILE}"))"
+    return 0
+  fi
+  kill_orphans ""
+  local PY
+  PY="$(find_python)" || { echo "ERROR: python3 not found"; return 1; }
+  if [ ! -f "${APPDEST}/main.py" ]; then
+    echo "ERROR: ${APPDEST}/main.py 不存在，安装可能不完整"
+    return 1
+  fi
+  rotate_log
+  cd "${APPDEST}" || return 1
+  # fnOS 的 PATH 极简，这里把解释器与工作目录都写成绝对路径
+  TRIM_APPDEST="${APPDEST}" TRIM_PKGVAR="${PKGVAR}" TRIM_PKGETC="${PKGETC}" \
+    nohup "${PY}" -u "${APPDEST}/main.py" >>"${STDOUT_LOG}" 2>&1 &
+  echo $! >"${PIDFILE}"
+  sleep 3
+  if is_running; then
+    echo "started (pid $(cat "${PIDFILE}"))"
+    return 0
+  fi
+  echo "ERROR: 启动失败，最近日志："
+  tail -n 30 "${STDOUT_LOG}" 2>/dev/null
+  rm -f "${PIDFILE}"
+  return 1
+}
+
+do_stop() {
+  if ! is_running; then
+    # 记录说没在跑，但可能有 pid 文件丢了的残留进程，一并停掉
+    kill_orphans ""
+    echo "not running"
+    rm -f "${PIDFILE}"
+    return 0
+  fi
+  local pid
+  pid="$(cat "${PIDFILE}")"
+  kill -TERM "${pid}" 2>/dev/null
+  local i=0
+  while [ $i -lt 20 ]; do
+    if ! kill -0 "${pid}" 2>/dev/null; then break; fi
+    sleep 0.5
+    i=$((i + 1))
+  done
+  if kill -0 "${pid}" 2>/dev/null; then
+    kill -9 "${pid}" 2>/dev/null
+    sleep 1
+  fi
+  rm -f "${PIDFILE}"
+  # 除了 pid 文件里那个，可能还有更早的残留（升级换过目录、手起过一份）
+  kill_orphans ""
+  echo "stopped"
+  return 0
+}
+
+do_status() {
+  if is_running; then
+    echo "running (pid $(cat "${PIDFILE}"))"
+    return 0
+  fi
+  echo "stopped"
+  return 3
+}
+
+case "${1:-start}" in
+  start) do_start ;;
+  stop) do_stop ;;
+  restart) do_stop; do_start ;;
+  status) do_status ;;
+  *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac

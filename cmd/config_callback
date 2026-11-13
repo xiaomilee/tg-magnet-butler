@@ -1,0 +1,17 @@
+#!/bin/bash
+# 配置向导后：应用向导里改的参数
+set -u
+export PATH="/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
+
+APPNAME="tgmagnet"
+APPDEST="${TRIM_APPDEST:-/var/apps/${APPNAME}/target}"
+PKGVAR="${TRIM_PKGVAR:-/var/apps/${APPNAME}/var}"
+PKGETC="${TRIM_PKGETC:-/var/apps/${APPNAME}/etc}"
+
+PY="/usr/bin/python3"
+[ -x "$PY" ] || PY="$(command -v python3)"
+
+if [ -f "${APPDEST}/wizard_apply.py" ] && [ -n "${PY}" ]; then
+  "${PY}" "${APPDEST}/wizard_apply.py" "${PKGETC}" "${PKGVAR}" || true
+fi
+exit 0

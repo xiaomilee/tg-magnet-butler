@@ -1,0 +1,15 @@
+appname           = tgmagnet
+version           = 1.0.41
+display_name      = 磁力管家
+desc              = 把转发到 Telegram 机器人的消息自动分拣关键词，检索 sukebei.nyaa.si，提取磁力链接并投递到飞牛内的迅雷下载。<br/>支持关键词规则、结果打分去重、aria2/qBittorrent 兜底，自带 Web 管理面板。
+source            = thirdparty
+platform          = x86
+os_min_version    = 1.0.0
+maintainer        = tg-magnet-butler
+distributor       = tg-magnet-butler
+service_port      = 8470
+checkport         = true
+ctl_stop          = true
+desktop_uidir     = ui
+desktop_applaunchname = tgmagnet.Application
+changelog         = 1.0.41 修「迅雷连不上」：pan_auth 被粘成整条 device/info/watch 地址时自动掐出里面的 JWT（读配置、存配置、发请求三处都校一遍），不再让网关回一句像是令牌过期的 segments 错误；令牌形状不对时面板直说「不是 JWT」而不是劝你重登飞牛<br/>1.0.40 代理不再分主备：设置页只剩一个多行框，一行一个地址、从上往下试，这条不通自动换下一条，全都不通才直连；框下面按行列出每条的实测结果，「检索站单独的代理」取消（老配置里填过的地址自动并进来）<br/>1.0.39 测速不再一票否决：只要 Telegram 或检索站有一个通，这条线路就算可用，只通一个的标成琥珀色并写明哪个站不通；两个都不通才轮到下一条/直连

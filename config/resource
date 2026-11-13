@@ -1,0 +1,6 @@
+{
+  "port-config": {
+    "protocol-file": "tgmagnet.sc"
+  },
+  "systemd-unit": {}
+}
