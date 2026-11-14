@@ -229,6 +229,25 @@ async def main():
         await pg.click('.nav-item[data-tab="download"]')
         await pg.wait_for_timeout(700)
         check("从抽屉能进「下载与迅雷」", await pg.is_visible("#tab-download"))
+        # 1.0.43：探测与重连合成一个按钮，迅雷卡里不该再挂第二个
+        check("下载页有「重连并诊断」", await pg.is_visible("#btnDlProbe"))
+        check("按钮文案说到重连", "重连" in (await pg.inner_text("#btnDlProbe")))
+        check("迅雷卡不再有第二个重连按钮",
+              await pg.query_selector("#btnXlReconnect") is None)
+        # 换成别的后端时文案要退回纯「测试连接」，不能还写着重连
+        await pg.select_option("#dBackend", "aria2")
+        await pg.wait_for_timeout(200)
+        check("后端不是迅雷时改叫「测试连接」",
+              (await pg.inner_text("#btnDlProbe")).strip() == "测试连接")
+        await pg.select_option("#dBackend", "xunlei")
+        await pg.wait_for_timeout(200)
+        check("换回迅雷又变「重连并诊断」",
+              (await pg.inner_text("#btnDlProbe")).strip() == "重连并诊断")
+        # 改过表单就算「脏」，直接切页会被未保存确认拦住，所以存一次再走
+        await pg.click("#btnDlSave")
+        await pg.wait_for_timeout(900)
+        check("保存重填后文案还是「重连并诊断」",
+              (await pg.inner_text("#btnDlProbe")).strip() == "重连并诊断")
         await pg.click('.tabbar-item[data-tab="overview"]')
         await pg.wait_for_timeout(600)
 

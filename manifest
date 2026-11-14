@@ -1,5 +1,5 @@
 appname           = tgmagnet
-version           = 1.0.42
+version           = 1.0.43
 display_name      = 磁力管家
 desc              = 把转发到 Telegram 机器人的消息自动分拣关键词，检索 sukebei.nyaa.si，提取磁力链接并投递到飞牛内的迅雷下载。<br/>支持关键词规则、结果打分去重、aria2/qBittorrent 兜底，自带 Web 管理面板。
 source            = thirdparty
@@ -12,4 +12,4 @@ checkport         = true
 ctl_stop          = true
 desktop_uidir     = ui
 desktop_applaunchname = tgmagnet.Application
-changelog         = 1.0.42 修「迅雷连不上」的真根因：新版飞牛网关改认 Cookie 里的 fnwg_token + ost，只要还带着老 fnos-token 就整条拒（回 13 字节 invalid token）——以前把这种判成 pan_auth 过期，白重登迅雷。设置页那格改成「飞牛登录 Cookie」，整条粘进来会自动剔掉惹事项；程序还能用这条 Cookie 打开迅雷套件首页，把内联的 pan_auth 自己抓回来，令牌轮换不必再开 F12<br/>1.0.41 pan_auth 被粘成整条 device/info/watch 地址时自动掐出里面的 JWT，不再让网关回一句像是过期的 segments 错误<br/>1.0.40 代理不再分主备：设置页只剩一个多行框，一行一个地址、从上往下试，不通就换下一条，全都不通才直连
+changelog         = 1.0.43 「测试连接」和「立即重连」合成一个「重连并诊断」：先测一次，迅雷不通才自动重新侦测网关并重连，然后再测一遍，结果一起报出来——以前选迅雷当后端时两个按钮看着一样，点错就会把手填的端口与令牌覆盖掉；后端换成 aria2/qBittorrent 时按钮退回纯「测试连接」，只测不改配置。概览快捷开关的「立即重连」照旧<br/>1.0.42 修「迅雷连不上」的真根因：新版飞牛网关改认 Cookie 里的 fnwg_token + ost，只要还带着老 fnos-token 就整条拒（回 13 字节 invalid token）——以前把这种判成 pan_auth 过期，白重登迅雷。设置页那格改成「飞牛登录 Cookie」，整条粘进来会自动剔掉惹事项；程序还能用这条 Cookie 打开迅雷套件首页，把内联的 pan_auth 自己抓回来<br/>1.0.41 pan_auth 被粘成整条 device/info/watch 地址时自动掐出里面的 JWT，不再让网关回一句像是过期的 segments 错误

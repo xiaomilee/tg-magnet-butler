@@ -249,11 +249,30 @@ class TestMarkup(unittest.TestCase):
         """
         for gone in ('id="xMode"', 'id="xPort"', 'id="xFnPort"', 'id="xHost"'):
             self.assertNotIn(gone, self.html, "设置页不该再有 %s" % gone)
-        self.assertIn('id="btnXlReconnect"', self.html)
+        # 1.0.43：迅雷卡里的「立即重连」并入「重连并诊断」，一个按钮干完探测+重连
+        self.assertNotIn('id="btnXlReconnect"', self.html,
+                         "重连已并入「重连并诊断」，别再挂第二个按钮")
+        self.assertIn('id="btnDlProbe"', self.html)
         self.assertIn('id="xConnState"', self.html)
         # 保存时必须固定网关模式，不能被旧配置带着又写回 panel
         self.assertIn('mode: "fnos_gateway"', self.js)
         self.assertIn('/xunlei/reconnect', self.js)
+
+    def test_probe_button_retries_through_reconnect(self):
+        """「重连并诊断」= 先测、不通再自动重连、复测，顺序不能反。
+
+        以前是两个按钮：一个只体检、一个会写配置。选迅雷时看不出差别，
+        点错就把手填的端口与令牌覆盖了，所以合成了一个。
+        """
+        self.assertIn('重连并诊断', self.html)
+        js = self.js
+        # 只在迅雷不通时才走重连，别的后端点一下只是测
+        self.assertIn('be !== "xunlei"', js)
+        # 重连之后要再测一遍，否则用户不知道到底好了没
+        self.assertIn('retried: true', js)
+        self.assertIn('复测仍未通过', js)
+        # 概览快捷开关仍保留独立入口（用户要的常用入口）
+        self.assertIn('id="qXlReconnect"', self.html)
 
     def test_proxy_card_holds_everything(self):
         """代理只有一处：一个框、一行一个地址，不分主备。

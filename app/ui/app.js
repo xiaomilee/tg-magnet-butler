@@ -543,6 +543,7 @@
     setVal("cDedupe", a.dedupe_days); setVal("cLogLevel", a.log_level); setVal("cToken", a.access_token);
     setVal("dBackend", dl.backend); setVal("dFallback", listToStr(dl.fallback));
     setChecked("dAuto", dl.auto_download); setVal("dAutoPick", dl.auto_pick);
+    syncProbeBtn();   /* 后端是从配置读回来的，按钮文案要跟着变 */
     state.xFnPort = x.fnos_port || 5666;
     setVal("xPanAuth", x.pan_auth);
     setVal("xFnToken", x.fnos_cookie || x.fnos_token); setVal("xTarget", x.target);
@@ -1440,10 +1441,33 @@
       .then(function () { btn.disabled = false; });
   }
 
+  /* 迅雷连接状态就地刷新：状态行、概览快捷开关、顶栏徽标一起改，不用等下一轮 /status 轮询。
+     重连（概览快捷开关）和「重连并诊断」都走这里，免得两个入口对状态的写法不一致。 */
+  function paintXunleiConn(conn) {
+    var cs = $("xConnState");
+    if (cs) {
+      cs.textContent = xlStateText(conn);
+      cs.className = "small " + (conn.ok ? "muted" : "warn-text");
+      cs.title = conn.text || "";
+    }
+    syncQuickXunlei(conn);
+    var bsub = $("statBackendSub");
+    if (bsub) {
+      bsub.textContent = xlStateText(conn);
+      bsub.className = "stat-sub" + (conn.ok ? "" : " warn-text");
+      bsub.title = conn.text || "";
+    }
+    var pill = $("pillBackend");
+    if (pill) {
+      pill.textContent = "后端 迅雷 · " + (conn.ok ? "已连接" : "未连接");
+      pill.title = conn.text || "";
+    }
+  }
+
   /* 立即重连：重扫本机迅雷网关，打通就写配置并复测（启动时也会自动做一次）。
-     概览页的快捷开关和下载页的老按钮共用这一份，btn 传被点的那一个，转圈只锁它自己。 */
+     概览页的快捷开关用它，转圈只锁它自己。 */
   function detectXunlei(btn) {
-    btn = btn || $("btnXlReconnect") || $("qXlReconnect");
+    btn = btn || $("qXlReconnect");
     var out = $("xProbeOut"), st = $("qXlState");
     if (btn) btn.disabled = true;
     if (out) {
@@ -1454,24 +1478,8 @@
     api("/xunlei/reconnect", { method: "POST", body: {} }).then(function (d) {
       if (out) out.textContent = d.text || JSON.stringify(d, null, 2);
       if (d.applied) loadConfig();
-      var conn = { ok: !!d.ok, port: d.port, text: (d.notes || [])[0] || "" };
-      /* 状态行立刻更新，不用等下一轮 /status 轮询 */
-      var cs = $("xConnState");
-      if (cs) {
-        cs.textContent = xlStateText(conn);
-        cs.className = "small " + (d.ok ? "muted" : "warn-text");
-        cs.title = conn.text;
-      }
-      syncQuickXunlei(conn);
-      var bsub = $("statBackendSub");
-      if (bsub) {
-        bsub.textContent = xlStateText(conn);
-        bsub.className = "stat-sub" + (d.ok ? "" : " warn-text");
-        bsub.title = conn.text;
-      }
-      $("pillBackend").textContent = "后端 迅雷 · " + (d.ok ? "已连接" : "未连接");
-      $("pillBackend").title = conn.text;
-      toast(d.ok ? "已连上迅雷" : "没连上：" + (conn.text || "未知原因"), !d.ok);
+      paintXunleiConn({ ok: !!d.ok, port: d.port, text: (d.notes || [])[0] || "" });
+      toast(d.ok ? "已连上迅雷" : "没连上：" + ((d.notes || [])[0] || "未知原因"), !d.ok);
     }).catch(function (e) {
       if (out) out.textContent = e.message;
       if (st) { st.textContent = "重连失败"; st.className = "warn-text"; }
@@ -1712,14 +1720,54 @@
     });
   }
 
+  /* 按钮文案跟着后端走：迅雷能自动重连，别的后端点下去只是测一下，别写成「重连」 */
+  function syncProbeBtn() {
+    var b = $("btnDlProbe");
+    if (!b) return;
+    if (val("dBackend") === "xunlei") {
+      b.textContent = "重连并诊断";
+      b.title = "先测一次（只读体检）；不通会自动重新侦测本机迅雷网关并重连，然后再测一遍";
+    } else {
+      b.textContent = "测试连接";
+      b.title = "只测一次当前后端，不改任何配置";
+    }
+  }
+
+  /* 「重连并诊断」：一个按钮干完两件事。
+     以前这里是「测试连接」和「立即重连」两个按钮，主用后端选迅雷时它俩看着一样，
+     容易点错——一个只体检、一个会覆盖手填的端口与令牌，差别却看不出来。
+     现在合成一个：先按当前后端测一次（只读体检，不改配置）；只有迅雷不通时，
+     才自动重新侦测本机网关、写回端口与令牌，然后再测一遍并把结果一起报出来。 */
   function probeDownloader() {
     var btn = $("btnDlProbe");
-    btn.disabled = true;
     var out = $("xProbeOut");
+    var be = val("dBackend") || "xunlei";
+    btn.disabled = true;
     out.classList.add("show");
     out.textContent = "检测中…";
-    api("/probe/downloader", { method: "POST", body: { backend: val("dBackend") } }).then(function (d) {
-      out.textContent = fmtProbe(d);
+    api("/probe/downloader", { method: "POST", body: { backend: be } }).then(function (d) {
+      if (d.ok || be !== "xunlei") return { probe: d, retried: false };
+      /* 迅雷不通：这就是以前要手动点「立即重连」的那一步，现在自动接着做 */
+      out.textContent = fmtProbe(d) + "\n\n—— 没通，正在重新侦测本机迅雷网关并重连…";
+      return api("/xunlei/reconnect", { method: "POST", body: {} }).then(function (r) {
+        paintXunleiConn({ ok: !!r.ok, port: r.port, text: (r.notes || [])[0] || "" });
+        if (r.applied) loadConfig();
+        return api("/probe/downloader", { method: "POST", body: { backend: be } })
+          .then(function (d2) { return { probe: d2, retried: true, rec: r || {} }; });
+      });
+    }).then(function (res) {
+      var d = res.probe || {};
+      var L = [fmtProbe(d)];
+      if (res.retried) {
+        var rec = res.rec || {};
+        L.push("");
+        L.push("—— 已自动重新侦测并重连" +
+               (rec.port ? "（网关端口 " + rec.port + "）" : "") +
+               (d.ok ? "，复测通过" : "，复测仍未通过"));
+        var notes = rec.notes || [];
+        if (notes.length) L.push("　　" + notes.join("\n　　"));
+      }
+      out.textContent = L.join("\n");
       var warn = d.ok && d.folder === "invalid";
       toast(d.ok ? (warn ? "连接正常，但下载目录 id 填错了" : "连接正常")
                  : "连接异常：" + (d.error || d.hint || ""), !d.ok || warn);
@@ -1865,8 +1913,8 @@
     $("libQuery").addEventListener("keydown", function (e) {
       if (e.key === "Enter") libLookup();
     });
-    $("btnXlReconnect").addEventListener("click", function () { detectXunlei($("btnXlReconnect")); });
     $("qXlReconnect").addEventListener("click", function () { detectXunlei($("qXlReconnect")); });
+    $("dBackend").addEventListener("change", syncProbeBtn);
     /* 筛选总开关与各条件联动：改了立刻反映「现在到底会不会生效」 */
     ["xFOn", "xFVideo", "xFSubtitle", "xFImage", "xFDoc", "xFArchive", "xFOther",
       "xFMin", "xFMax", "xFSubExempt"].forEach(function (id) {

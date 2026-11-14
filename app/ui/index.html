@@ -262,7 +262,8 @@
         <div class="card-head">
           <h3>下载通道</h3>
           <div class="row-actions">
-            <button class="btn ghost" id="btnDlProbe">测试连接</button>
+            <button class="btn ghost" id="btnDlProbe"
+              title="先按当前后端测一次（只读体检）；迅雷不通会自动重新侦测本机网关并重连，然后再测一遍">重连并诊断</button>
             <button class="btn" id="btnDlSave">保存</button>
           </div>
         </div>
@@ -301,13 +302,12 @@
           <div class="row-actions">
             <span class="badge">飞牛官方套件</span>
             <span class="small muted" id="xConnState">连接状态：启动时自动侦测</span>
-            <button class="btn ghost" id="btnXlReconnect"
-              data-confirm="会重新侦测本机迅雷，并把端口与令牌写进配置（手填值可能被覆盖）。继续？">立即重连</button>
           </div>
         </div>
         <p class="muted small">
           只接飞牛应用中心里的官方「迅雷」：启动时会自己侦测网关端口、复用当前飞牛登录态，
-          不需要选模式或填端口；连不上就点「立即重连」。</p>
+          不需要选模式或填端口；连不上就点上方「重连并诊断」——主用后端是迅雷时，
+          它会先测一遍，不通就自动重新侦测网关并重连。</p>
         <div class="form-grid">
           <label class="field wide"><span>pan_auth 令牌<em>只填 JWT 本身（形如 eyJ…）；粘成整条 device/info/watch 地址也没关系，保存时会自动掐出里面那段。连不上时程序会自己从迅雷套件首页重抓，一般不用手填</em></span><input id="xPanAuth" type="password" placeholder="自动侦测会尽量帮你抓；抓不到再手填"/></label>
           <label class="field wide"><span>飞牛登录 Cookie<em>新版飞牛要的是 Cookie 里的 fnwg_token + ost（老的 fnos-token 已不被接受）。浏览器 F12 → Network → 点一条 drive/v1 请求 → 复制 Cookie 整行粘进来即可，程序会自动剔掉让网关拒收的那几项；从飞牛桌面点开本面板也会自动带上</em></span><input id="xFnToken" type="password" placeholder="整条粘进来就行，不用自己挑"/></label>
@@ -356,10 +356,10 @@
         </div>
         <div id="xFoldOut" class="probe-out"></div>
         <p class="muted small" id="xTokenMeta">令牌来源：—</p>
-        <p class="muted small">投递报 <code>invalid token</code> 时，先点<b>测试连接</b>：它会对网关做一次对比，
-          直接告诉你是 <code>fnos-token</code> 还是 <code>pan_auth</code> 的问题，别再盲目重登飞牛。
-          网关模式下，从飞牛桌面点开本面板会把浏览器的 fnos-token 写进配置（只在网关模式写），
-          Telegram 那条路径也就能用上新令牌了。</p>
+        <p class="muted small">投递报 <code>invalid token</code> 时，先点上方<b>重连并诊断</b>：它先测一次，
+          不通就自动重新侦测网关并重连，并直接告诉你是登录 Cookie 还是 <code>pan_auth</code> 的问题，
+          别再盲目重登迅雷。从飞牛桌面点开本面板会把浏览器的登录 Cookie 写进配置（网关模式下才写），
+          Telegram 那条路径也就能用上新 Cookie 了。</p>
         <p class="muted small">报 <code>parent folder not found</code> 是「下载目录 id」对不上（换设备、重装迅雷、
           目录被删，或把路径填进了 id）：<b>留空就是迅雷默认下载目录</b>；要指定目录，在迅雷面板的文件列表里选中目录，
           从地址栏 <code>parent_folder_id=</code> 后面复制那串 id。
