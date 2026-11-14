@@ -545,7 +545,7 @@
     setChecked("dAuto", dl.auto_download); setVal("dAutoPick", dl.auto_pick);
     state.xFnPort = x.fnos_port || 5666;
     setVal("xPanAuth", x.pan_auth);
-    setVal("xFnToken", x.fnos_token); setVal("xTarget", x.target);
+    setVal("xFnToken", x.fnos_cookie || x.fnos_token); setVal("xTarget", x.target);
     setVal("xFolder", x.parent_folder_id); setChecked("xFOn", x.select_all_files !== true);
     var ff = x.file_filter || {};
     setChecked("xFVideo", ff.video !== false); setChecked("xFSubtitle", ff.subtitle !== false);
@@ -831,7 +831,7 @@
         xunlei: {
           mode: "fnos_gateway", host: "127.0.0.1",
           fnos_port: state.xFnPort || 5666, pan_auth: val("xPanAuth"),
-          fnos_token: val("xFnToken"), target: val("xTarget"),
+          fnos_cookie: val("xFnToken"), target: val("xTarget"),
           parent_folder_id: val("xFolder"), select_all_files: !checked("xFOn"),
           file_filter: {
             video: checked("xFVideo"), subtitle: checked("xFSubtitle"),

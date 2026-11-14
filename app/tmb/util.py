@@ -691,6 +691,72 @@ def clean_pan_auth(value) -> str:
     return text.split("&")[0].strip()
 
 
+# ---------------- 飞牛登录 Cookie ----------------
+# 1.0.42：新版 fnOS 网关（迅雷套件 3.23.5 起）改用 ``fnwg_token`` + ``ost``
+# 这一对做鉴权；更要命的是——**只要 Cookie 里出现 ``fnos-token`` 这个名字，
+# 网关就整条拒**，值和位置都不看，连静态页都不给，回 13 字节 ``invalid token``。
+# 2026-11-14 拿真 Cookie 逐项剥离实测：
+#   fnwg_token + ost            → 200，任务列表正常
+#   fnwg_token + ost + fnos-token → invalid token（放最前、放最后都一样）
+# 所以「从 F12 复制整条 Cookie」这条路必须先洗一遍，否则越贴越糟。
+_COOKIE_NEEDS_FNWG = "fnwg_token"
+_COOKIE_DROP_WITH_FNWG = ("fnos-token", "fnos_token")
+
+
+def clean_fnos_cookie(value) -> str:
+    """把「整条 Cookie 行」收拾成可以直接发给飞牛网关的一串。
+
+    能处理：带 ``Cookie:`` 前缀、带引号、多行粘贴、多余空白。
+    规则：串里已经有 ``fnwg_token``（新版飞牛）时，把 ``fnos-token`` 整项丢掉——
+    留着它会触发网关的严格校验，回 ``invalid token``，比不带还糟。
+    """
+    text = str(value or "").strip().strip("\"'").strip()
+    if not text:
+        return ""
+    low = text.lower()
+    for head in ("cookie:", "cookie："):
+        if low.startswith(head):
+            text = text[len(head):]
+            break
+    parts = []
+    for raw in re.split(r"[;\n\r]+", text):
+        item = raw.strip().strip("\"'").strip()
+        if not item or "=" not in item:
+            continue
+        name = item.split("=", 1)[0].strip()
+        if name:
+            parts.append((name, item))
+    if not parts:
+        return ""
+    names = {n.lower() for n, _ in parts}
+    drop = set(_COOKIE_DROP_WITH_FNWG) if _COOKIE_NEEDS_FNWG in names else set()
+    out, seen = [], set()
+    for name, item in parts:
+        key = name.lower()
+        if key in drop or key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return "; ".join(out)
+
+
+def fnos_cookie_has_fnwg(value) -> bool:
+    """这串 Cookie 里有没有新版飞牛要的 ``fnwg_token``。"""
+    return re.search(r"(?:^|;\s*)fnwg_token\s*=", str(value or ""), re.I) is not None
+
+
+# 套件首页会把当前 pan_auth 内联在 ``uiauth(value){ return "eyJ…" }`` 里。
+# 有它能自动换新令牌，用户就不必每次去 F12 里抄。
+_JWT_IN_PAGE = re.compile(
+    r"""["'](eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,})["']""")
+
+
+def find_jwt_in_page(text) -> str:
+    """从套件首页 HTML 里抠出内联的 pan_auth（JWT）。找不到返回空串。"""
+    found = _JWT_IN_PAGE.search(str(text or ""))
+    return found.group(1) if found else ""
+
+
 _TAG_RE = re.compile(r"<[^>]+>")
 
 

@@ -94,7 +94,12 @@ DEFAULT_CONFIG = {
             # 迅雷的 pan_auth（浏览器开发者工具里拷，见文档）
             "pan_auth": "",
             "xla_ci": "",
-            # mode=fnos_gateway 时需要飞牛登录 token
+            # 1.0.42：新版 fnOS 网关（迅雷套件 3.23.5 起）认的是 Cookie 里
+            # fnwg_token + ost 这一对，老的 fnos-token 现在一出现就被整条拒
+            # （回 13 字节 invalid token，静态页也不给）。整条 Cookie 串存这里，
+            # 发请求时原样带上；fnos_token 留给还没升级的老飞牛。
+            "fnos_cookie": "",
+            # mode=fnos_gateway 时需要飞牛登录 token（老版飞牛用，新版见 fnos_cookie）
             "fnos_token": "",
             # 这串令牌是什么时候、从哪儿来的：browser（面板读到的浏览器 Cookie）/
             # detect（自动侦测写入）/ manual（手填）。只用来判断它是不是早过期了。
@@ -377,6 +382,33 @@ class Config(object):
         if pan != raw_pan:
             x["pan_auth"] = pan
             changed = True
+        # 1.0.42：新版飞牛（迅雷套件 3.23.5 起）不再认 fnos-token，改认
+        # Cookie 里的 fnwg_token + ost；而且只要 fnos-token 这个名字还在，
+        # 网关就整条拒。两件事都要在这里收干净。
+        raw_xla = str(x.get("xla_ci") or "").strip()
+        if ";" in raw_xla or "fnwg_token=" in raw_xla:
+            # 1.0.41 的救急法：把 fnwg_token/ost 塞在 xla_ci 里（它也拼进 Cookie）。
+            # 现在有正经字段了，拆出来、把 xla_ci 还原成纯值。
+            ci, jar = "", []
+            for bit in (b.strip() for b in raw_xla.split(";")):
+                if not bit or "=" not in bit:
+                    if bit and not ci:
+                        ci = bit                     # 老写法：第一段就是 XLA_CI 的值
+                    continue
+                name = bit.split("=", 1)[0].strip().lower()
+                if name == "xla_ci":
+                    ci = bit.split("=", 1)[1].strip()
+                elif name in ("fnwg_token", "ost", "osrt", "xtoken"):
+                    jar.append(bit)
+            x["xla_ci"] = ci
+            if jar and not str(x.get("fnos_cookie") or "").strip():
+                x["fnos_cookie"] = "; ".join(jar)
+            changed = True
+        raw_ck = str(x.get("fnos_cookie") or "")
+        ck = util.clean_fnos_cookie(raw_ck)
+        if ck != raw_ck:
+            x["fnos_cookie"] = ck
+            changed = True
         return changed
 
     def save_rules(self, rules: dict):
@@ -414,6 +446,7 @@ class Config(object):
         mask(view.get("telegram", {}), "bot_token")
         mask(view.get("download", {}).get("xunlei", {}), "pan_auth")
         mask(view.get("download", {}).get("xunlei", {}), "fnos_token")
+        mask(view.get("download", {}).get("xunlei", {}), "fnos_cookie")
         mask(view.get("download", {}).get("xunlei", {}), "xla_ci")
         mask(view.get("download", {}).get("aria2", {}), "secret")
         mask(view.get("download", {}).get("qbittorrent", {}), "password")

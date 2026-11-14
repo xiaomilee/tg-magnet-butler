@@ -331,17 +331,62 @@ class Pipeline(object):
                 "expired": bool(life.get("expired")),
                 "mode": xcfg.get("mode") or "fnos_gateway"}
 
-    def rescan_xunlei_token(self, only_if_newer=False, timeout=2):
-        """在本机重扫令牌并写回配置，返回 (是否换了, 一句话说明)。
+    def _pan_auth_from_page(self):
+        """让下载器从套件首页读一次当前 pan_auth，返回 (token, 说明)。
 
-        只在本机重扫（迅雷跟本程序装在同一台 NAS 上才有意义），拿到可用令牌才写配置，
+        这是 1.0.42 的新主路：新版套件把 pan_auth 内联在首页的 ``uiauth()`` 里，
+        根本不落盘——1.0.41 的文件扫描在它上面一无所获（面板那句「本机没扫到
+        能用的令牌」就是这么来的）。
+        """
+        try:
+            inst = downloaders.make("xunlei", self.cfg.data,
+                                    self.cfg.get("telegram.proxy") or "")
+        except Exception:
+            log.exception("构造迅雷下载器失败")
+            return "", ""
+        if not inst or not hasattr(inst, "fetch_pan_auth"):
+            return "", ""
+        try:
+            got = inst.fetch_pan_auth()
+        except Exception:
+            log.exception("从套件首页抓 pan_auth 失败")
+            return "", ""
+        # 自愈路径上这个下载器可能是测试替身，别让奇形怪状的返回值炸到调用方
+        if not (isinstance(got, tuple) and len(got) == 2):
+            return "", ""
+        return got
+
+    def rescan_xunlei_token(self, only_if_newer=False, timeout=2):
+        """在本机重抓令牌并写回配置，返回 (是否换了, 一句话说明)。
+
+        只在本机重抓（迅雷跟本程序装在同一台 NAS 上才有意义），拿到可用令牌才写配置，
         捞不到就保持原样——宁可报错，也不能把本来能用的配置覆盖成空的。
         only_if_newer=True 时还要求新令牌的过期时间更晚，避免把刚续好的换回旧的。
+
+        1.0.42 起先走「套件首页」这条新路（见 :meth:`_pan_auth_from_page`），
+        走不通才退回扫文件，照顾还没升级的老套件。
         """
         xcfg = (self.cfg.data.get("download") or {}).get("xunlei") or {}
+        got, why = self._pan_auth_from_page()
+        if got:
+            old = str(xcfg.get("pan_auth") or "").strip()
+            if got == old:
+                return False, "套件首页里的令牌与现有配置一致"
+            if only_if_newer:
+                exp_old = pan_auth_life(old).get("exp")
+                exp_new = pan_auth_life(got).get("exp")
+                if exp_old and exp_new and exp_new <= exp_old:
+                    return False, "首页里的令牌不比现在的新"
+            self.cfg.apply_patch({"download": {"xunlei": {"pan_auth": got}}})
+            self.store.add_event("xunlei_token_refreshed", "已从套件首页换用新令牌")
+            log.info("pan_auth 已从套件首页更新（%d 字符）", len(got))
+            return True, "已从套件首页换用新令牌"
+        if why:
+            log.info("套件首页没取到令牌：%s", why)
         try:
             from . import xunlei_detect
-            rep = xunlei_detect.scan(fnos_token=xcfg.get("fnos_token") or "",
+            rep = xunlei_detect.scan(fnos_token=(xcfg.get("fnos_cookie")
+                                                 or xcfg.get("fnos_token") or ""),
                                      cfg=self.cfg.data, timeout=timeout)
         except Exception:
             log.exception("重扫迅雷令牌失败，忽略")

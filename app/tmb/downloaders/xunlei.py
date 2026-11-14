@@ -351,25 +351,27 @@ def explain_auth(kind, mode, cfg, culprit="", age=None, cloud_ok=False) -> str:
             return ("这个网关其实不校验 fnos-token：去掉它就能连通，带着反而被拒。"
                     "把设置里的 fnos-token 清空保存即可")
         if culprit == "pan_auth":
-            return _pan_fix_text(cfg, "飞牛登录态（fnos-token）是好的，问题在迅雷自己的 pan_auth")
+            return _pan_fix_text(cfg, "飞牛登录 Cookie 是好的，问题在迅雷自己的 pan_auth")
         life = pan_auth_life(cfg.get("pan_auth"))
         if life.get("expired"):
             # 连对比都没必要了：JWT 自己写着过期时间
-            return _pan_fix_text(cfg, "先别管 fnos-token——迅雷的 pan_auth 自己就写着过期了")
-        if not (cfg.get("fnos_token") or "").strip():
-            return ("网关模式缺 fnos-token（飞牛登录态）：从飞牛桌面点开本面板，"
-                    "它会带上你的登录态；再点「自动侦测并连接」")
+            return _pan_fix_text(cfg, "先别管登录态——迅雷的 pan_auth 自己就写着过期了")
+        if not (cfg.get("fnos_cookie") or "").strip() and not (cfg.get("fnos_token") or "").strip():
+            return ("网关模式缺飞牛登录 Cookie（新版飞牛要的是 Cookie 里 "
+                    "fnwg_token + ost 这一对，老的 fnos-token 已经不认了）："
+                    "从飞牛桌面点开本面板，它会自动带上；或在浏览器 F12 → Network → "
+                    "点一条 drive/v1 请求 → 复制 Cookie 整行，粘到设置里保存")
         when = _age_text(age)
-        head = ("fnos-token 失效了（配置里这个是 %s 存的，网关没认它）" % when if when
-                else "fnos-token 失效了（网关没认这个 Cookie）")
+        head = ("飞牛登录 Cookie 失效了（配置里这个是 %s 存的，网关没认它）" % when if when
+                else "飞牛登录 Cookie 失效了（网关没认它）")
         # 刚换来的还被拒，让人去重登飞牛就是白折腾：换三条更可能的排查方向
         if age is not None and age < 600:
-            tail = ("这个令牌是刚抓的还被拒：先确认「飞牛网关端口」是飞牛 Web 端口（默认 5666），"
+            tail = ("这个 Cookie 是刚抓的还被拒：先确认「飞牛网关端口」是飞牛 Web 端口（默认 5666），"
                     "再确认这台飞牛上装的确实是官方迅雷、且属于当前登录的账号")
         else:
-            tail = ("重登飞牛不会自动更新这里存的值，必须重抓一次：从飞牛桌面点开本面板 → "
-                    "点「自动侦测并连接」；或在浏览器 F12 → 应用 → Cookie 里复制 fnos-token，"
-                    "粘到设置的 fnos-token 里保存")
+            tail = ("重登飞牛不会自动更新这里存的值，必须重抓一次：浏览器 F12 → Network → "
+                    "点一条 drive/v1 请求 → 复制 Cookie 整行，粘到设置的「飞牛登录 Cookie」保存。"
+                    "粘整条就行，程序会自动剔掉让网关拒收的 fnos-token")
         return head + "：" + tail
     if not (cfg.get("pan_auth") or "").strip():
         return ("面板模式没填 pan_auth：浏览器登录迅雷面板后复制令牌，"
@@ -600,23 +602,89 @@ class XunleiDownloader(BaseDownloader):
                     e = e2
             raise
 
+    def _cookie(self) -> str:
+        """发给飞牛网关的 Cookie 串。
+
+        1.0.42：新版飞牛（迅雷套件 3.23.5 起）认 ``fnwg_token`` + ``ost``，
+        老的 ``fnos-token`` 反而一出现就被整条拒（13 字节 ``invalid token``，
+        连静态页都不给）。所以这里优先用 ``fnos_cookie``，而且绝不把
+        ``fnos-token`` 拼进去——拼了就是亲手把自己锁在门外。
+        """
+        jar = util.clean_fnos_cookie(self.cfg.get("fnos_cookie"))
+        if jar:
+            return jar
+        tok = self._token()
+        if not tok:
+            return ""
+        # 老字段里也可能粘的是整条 Cookie（1.0.41 教过用户粘 URL，难免有人粘到这里）
+        if ";" in tok or util.fnos_cookie_has_fnwg(tok):
+            return util.clean_fnos_cookie(tok)
+        return "fnos-token=" + tok
+
     def _headers(self, with_token=True):
         h = {"Content-Type": "application/json"}
-        tok = self._token() if with_token else ""
-        cookies = []
-        if tok:
-            cookies.append("fnos-token=" + tok)
+        if not with_token:
+            return h
+        jar = self._cookie()
+        if not jar:
+            return h
         xla = str(self.cfg.get("xla_ci") or "").strip()
-        if xla:
-            cookies.append("XLA_CI=" + xla)
-        if cookies:
-            h["Cookie"] = "; ".join(cookies)
-        if tok:
-            # fnOS 各版本认的位置不完全一样：Cookie 是主流，个别反代只看自定义头。
-            # 两个都带上，省得用户为了「这串东西到底贴哪儿」再来回试。
-            h["X-Trim-Token"] = tok
-            h["X-Fnos-Token"] = tok
+        # xla_ci 只该是纯值；1.0.41 的救急写法（往里塞整条 Cookie）已由 config
+        # 迁移拆开，这里再兜一次，别把脏值当 XLA_CI 发出去。
+        if xla and ";" not in xla and "=" not in xla and "xla_ci=" not in jar.lower():
+            jar = jar + "; XLA_CI=" + xla
+        h["Cookie"] = jar
+        # 老版飞牛的反代有的只认自定义头；新版认 Cookie，多发的头里带着
+        # fnos-token 反倒会被判无效，所以只在确实走老路时才补。
+        if "fnos-token=" in jar:
+            tok = self._token()
+            if tok:
+                h["X-Trim-Token"] = tok
+                h["X-Fnos-Token"] = tok
         return h
+
+    def _fetch_page(self) -> tuple:
+        """GET 套件首页——只验登录 Cookie，压根不过问 pan_auth。
+
+        返回 (HTML, 证据)。能拿到 HTML = Cookie 有效；同样回 ``invalid token``
+        = Cookie 不行。这是分辨「谁是罪魁」唯一靠谱的办法（见 :meth:`auth_culprit`）。
+        """
+        url = self.api_base().rstrip("/") + "/"
+        ev = {"url": url}
+        try:
+            status, text, _raw = util.http_request(
+                url, headers=self._headers(), timeout=8,
+                proxy=self.proxy, retries=0)
+        except util.HttpError as e:
+            status = getattr(e, "status", 0) or 0
+            body = e.body
+            text = body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body)
+        except Exception as e:                        # 网络/代理问题，别当成鉴权结论
+            ev["error"] = str(e)
+            return "", ev
+        ev["status"] = status
+        ev["body"] = (text or "").strip()[:120]
+        if status == 200 and "<html" in (text or "").lower():
+            return text, ev
+        return "", ev
+
+    def fetch_pan_auth(self) -> tuple:
+        """从套件首页内联的 ``uiauth()`` 里读出当前 pan_auth，返回 (token, 说明)。
+
+        新版套件不把 pan_auth 落盘，但首页 HTML 里就写着
+        ``uiauth(value){ return "eyJ…" }``——只要登录 Cookie 是好的，就能自己换新。
+        这是 1.0.42 的重点：令牌轮换不用再麻烦用户去 F12 里抄。
+        """
+        page, ev = self._fetch_page()
+        if not page:
+            return "", "套件首页打不开（%s）" % (ev.get("body") or ev.get("error")
+                                              or ev.get("status") or "无响应")
+        token = util.find_jwt_in_page(page)
+        if not token:
+            return "", "首页里没找到内联令牌"
+        if not util.pan_auth_looks_valid(token):
+            return "", "首页里的令牌形状不对"
+        return token, "已从套件首页读到令牌"
 
     def _token(self) -> str:
         return str(self.cfg.get("fnos_token") or "").strip()
@@ -632,58 +700,42 @@ class XunleiDownloader(BaseDownloader):
         return max(0.0, time.time() - ts)
 
     def auth_culprit(self, with_text=""):
-        """网关模式下分辨「fnos-token 不行」还是「pan_auth 不行」。
+        """网关模式下判「这句 ``invalid token`` 是谁的锅」。
 
-        两个令牌是一起发出去的，返回文本又都是同一句 ``invalid token``，
-        光看它分不清是谁的错。1.0.10 之前干脆按模式一律怪 fnos-token，
-        结果用户重登飞牛多少次都没用——真正过期的是迅雷自己的 pan_auth。
+        1.0.41 之前拿同一个接口连问两次（带 / 不带 fnos-token）比对回答。这个
+        办法在新版飞牛上必然判反：网关只要看到 ``fnos-token`` 就整条拒，带着和
+        不带当然一模一样，于是被读成「网关不看 Cookie → 那就是 pan_auth 过期」，
+        把人引去重登迅雷、重抓令牌，折腾一圈还是原样（2026-11-14 就绕过这么一次）。
 
-        做法：**同一个接口**连问两次（同一个接口才能比），第二次不带 fnos-token：
-          * 带着能读任务列表   → 令牌没问题，问题在别处，别乱指；
-          * 去掉反而连通了     → 这个网关不校验它，那就别带；
-          * 两次回答一模一样   → 这个 Cookie 根本没起作用，是 fnos-token 的事；
-          * 回答变了（要登录） → 网关认了它，问题在 pan_auth。
+        1.0.42 改成问一个**不需要 pan_auth** 的地址：``<api_base>/`` 是套件首页，
+        登录 Cookie 有效才吐 HTML。
+          * 拿到 HTML            → Cookie 是好的 → 问题在 pan_auth
+          * 同样回 invalid token → Cookie 不行   → 问题在飞牛登录 Cookie
         """
         mode = (self.cfg.get("mode") or "panel").lower()
-        if mode != "fnos_gateway" or not self._token():
+        if mode != "fnos_gateway":
             return "", {}
-
-        def ask(with_token):
-            try:
-                return self._request("/drive/v1/tasks", method="GET",
-                                     extra={"limit": "1"}, with_token=with_token)
-            except util.HttpError as e:
-                return {"_raw_text": str(e)}
-
-        with_data = ask(True)
-        without_data = ask(False)
-        with_s = _snippet(with_data, 200).strip()
-        without_s = _snippet(without_data, 200).strip()
-        ev = {"with_token": with_s[:120], "without_token": without_s[:120]}
-
-        # 能拿到 JSON 就说明这一层放行了（_request 只在解析失败时才塞 _raw_text）
-        with_ok = not with_data.get("_auth_failed") and "_raw_text" not in with_data
-        without_ok = not without_data.get("_auth_failed") and "_raw_text" not in without_data
-        if with_ok:
-            ev["reason"] = "带上 fnos-token 网关能正常回 JSON，令牌本身没问题"
-            return "token_ok", ev
-        if without_ok:
-            ev["reason"] = "去掉 fnos-token 反而通了，是这串 Cookie 在添乱"
-            return "drop_token", ev
-        if not without_s:
-            return "", ev                       # 没得比，别硬栽
-        if without_s == with_s:
-            # 两次一样 = 这个 Cookie 根本没参与判定。别再顺势怪它：
-            # 从 127.0.0.1 访问网关时飞牛压根不校验 Cookie，真正的拒绝来自迅雷云的 pan_auth，
-            # 它的固定说法就是 invalid token。1.0.11 在这里判反了，害用户反复重登飞牛。
-            if _looks_like_pan_error(with_s):
-                ev["reason"] = ("带着和去掉 fnos-token 回答一模一样 → 网关不看这个 Cookie；"
-                                "回的是迅雷侧的 token 错误 → 过期的是 pan_auth")
-                return "pan_auth", ev
-            ev["reason"] = "带着和去掉 fnos-token 回答一模一样，且都是网关侧的拒绝 → fnos-token 没被认"
+        page, ev = self._fetch_page()
+        ev["probe"] = "GET %s/" % self.api_base()
+        if page:
+            ev["reason"] = ("套件首页能打开（%d 字节），登录 Cookie 有效 → 剩下只可能是 pan_auth"
+                            % len(page))
+            return "pan_auth", ev
+        body = (ev.get("body") or "").strip()
+        if ev.get("error"):
+            ev["reason"] = "探针请求本身没发出去（%s），先别怪令牌" % ev["error"]
+            return "", ev
+        if _looks_like_pan_error(body):
+            if util.fnos_cookie_has_fnwg(self._cookie()):
+                ev["reason"] = ("带着 fnwg_token 仍被整条拒 → 这串飞牛登录 Cookie 已经失效了")
+            elif not self._cookie():
+                ev["reason"] = "一个飞牛登录 Cookie 都没配 → 网关一律拒，跟迅雷没关系"
+            else:
+                ev["reason"] = ("Cookie 里只有老的 fnos-token；新版飞牛只认 "
+                                "fnwg_token + ost → 网关一律拒")
             return "fnos_token", ev
-        ev["reason"] = "去掉 fnos-token 后回答变了，说明网关认过这个 Cookie"
-        return "pan_auth", ev
+        ev["reason"] = "探针回了别的东西（%s），先查网络/端口" % (body[:60] or "空响应")
+        return "", ev
 
     def _url(self, path: str, extra: dict = None):
         params = {"pan_auth": self.cfg.get("pan_auth") or "", "device_space": ""}
@@ -1546,6 +1598,40 @@ class XunleiDownloader(BaseDownloader):
         return DownloadResult(False, self.name, "",
                               "迅雷拒绝任务: %s" % _snippet(resp, 200), base_raw)
 
+    def _retry_with_page_token(self, info):
+        """Cookie 有效、pan_auth 被拒时，拿套件首页内联的令牌换一次再试。
+
+        1.0.42 的自愈核心：新版套件不把 pan_auth 落盘（文件扫描一无所获就是这原因），
+        但首页 HTML 里就写着当前那条。只要登录 Cookie 还是好的，程序就能自己把令牌
+        捞回来，不用再让用户开 F12 抄。
+        """
+        fresh, why = self.fetch_pan_auth()
+        if not fresh:
+            info["pan_auth_refresh"] = why
+            return {}, info
+        old = str(self.cfg.get("pan_auth") or "").strip()
+        if fresh == old:
+            info["pan_auth_refresh"] = "首页里的令牌与现在这条一致（%s）" % why
+            return {}, info
+        self.cfg["pan_auth"] = fresh
+        info["pan_auth_new"] = fresh
+        info["pan_auth_refresh"] = why
+        log.info("pan_auth 被拒，已从套件首页换用新令牌（%d 字符）", len(fresh))
+        try:
+            data = self._request("/drive/v1/tasks", method="GET", extra={"limit": "5"})
+        except util.HttpError as e:
+            info["error"] = str(e)
+            return {}, info
+        if isinstance(data, dict) and not data.get("_auth_failed") and "tasks" in data:
+            info["ok"] = True
+            info["tasks_ok"] = True
+            info["tasks_sample"] = _snippet(data, 400)
+            info["hint"] = "已自动换用套件首页里的新 pan_auth，重连成功"
+            info.pop("error", None)
+            info.pop("culprit", None)
+            info.pop("auth", None)
+        return data, info
+
     def probe(self) -> dict:
         info = {"backend": self.name, "mode": self.cfg.get("mode") or "fnos_gateway",
                 "api_base": self.api_base(), "auth": ""}
@@ -1579,15 +1665,21 @@ class XunleiDownloader(BaseDownloader):
             info["token_age"] = _age_text(self.token_age())
             info["token_source"] = str(self.cfg.get("fnos_token_source") or "")
             culprit = ""
-            if kind == "token" and info["mode"].lower() == "fnos_gateway" and self._token():
+            if kind == "token" and info["mode"].lower() == "fnos_gateway" and self._cookie():
                 culprit, evidence = self.auth_culprit(info["error"])
                 info["culprit"] = culprit
                 if evidence.get("reason"):
                     info["auth_evidence"] = evidence["reason"]
-            info["hint"] = explain_auth(kind, info["mode"], self.cfg, culprit,
-                                        self.token_age(), cloud_ok=self._cloud_ok)
-            info["hint"] = _merge_hint(info["hint"], self._route_note(info))
-            return info
+            if culprit == "pan_auth":
+                # 登录 Cookie 是好的，只是 pan_auth 被云端作废了——首页里就写着
+                # 当前那条，用同一个 Cookie 读回来，换上去再试，用户不用动手。
+                data, info = self._retry_with_page_token(info)
+                kind = "" if info.get("tasks_ok") else (data.get("_auth_failed") or "token")
+            if kind:
+                info["hint"] = explain_auth(kind, info["mode"], self.cfg, culprit,
+                                            self.token_age(), cloud_ok=self._cloud_ok)
+                info["hint"] = _merge_hint(info["hint"], self._route_note(info))
+                return info
 
         info["tasks_ok"] = True
         target = _find_target(data)

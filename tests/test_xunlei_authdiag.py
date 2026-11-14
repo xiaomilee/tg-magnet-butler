@@ -31,13 +31,30 @@ def gateway_cfg(**kw):
 
 
 class TestHeaders(unittest.TestCase):
-    def test_token_goes_to_cookie_and_headers(self):
+    def test_legacy_token_still_uses_fnos_token(self):
+        """老版飞牛：没配 fnos_cookie 时仍按 fnos-token 发，自定义头也照旧。"""
         dl = XunleiDownloader(gateway_cfg())
         h = dl._headers()
         self.assertIn("fnos-token=FNTOKEN", h["Cookie"])
-        # 各版本认的位置不一样，都带上，省得用户来回试
         self.assertEqual(h["X-Trim-Token"], "FNTOKEN")
         self.assertEqual(h["X-Fnos-Token"], "FNTOKEN")
+
+    def test_new_cookie_is_sent_verbatim(self):
+        """新版飞牛：整条 Cookie 原样发，不套前缀、也不补自定义头。"""
+        dl = XunleiDownloader(gateway_cfg(
+            fnos_token="", fnos_cookie="XLA_CI=CI1; fnwg_token=W; ost=O"))
+        h = dl._headers()
+        self.assertIn("fnwg_token=W", h["Cookie"])
+        self.assertIn("ost=O", h["Cookie"])
+        self.assertNotIn("X-Trim-Token", h)
+
+    def test_fnos_token_never_leaks_into_new_cookie(self):
+        """硬规则：Cookie 里出现 fnos-token 就被整条拒，必须剔掉。"""
+        dl = XunleiDownloader(gateway_cfg(
+            fnos_token="", fnos_cookie="fnos-token=OLD; fnwg_token=W; ost=O"))
+        cookie = dl._headers()["Cookie"]
+        self.assertNotIn("fnos-token=OLD", cookie)
+        self.assertIn("fnwg_token=W", cookie)
 
     def test_no_empty_cookie_junk(self):
         dl = XunleiDownloader(gateway_cfg(fnos_token="", xla_ci=""))
@@ -45,86 +62,77 @@ class TestHeaders(unittest.TestCase):
         self.assertNotIn("Cookie", h)
         self.assertNotIn("X-Trim-Token", h)
 
-    def test_xla_ci_only(self):
-        dl = XunleiDownloader(gateway_cfg(fnos_token="", xla_ci="CI1"))
-        self.assertEqual(dl._headers()["Cookie"], "XLA_CI=CI1")
+    def test_dirty_xla_ci_is_not_sent(self):
+        """1.0.41 的救急法把整条 Cookie 塞进 xla_ci，别再当 XLA_CI 发出去。"""
+        dl = XunleiDownloader(gateway_cfg(fnos_token="", xla_ci="fnwg_token=W; ost=O"))
+        self.assertNotIn("Cookie", dl._headers())
 
     def test_with_token_false_drops_everything(self):
         dl = XunleiDownloader(gateway_cfg(xla_ci="CI1"))
         h = dl._headers(with_token=False)
-        self.assertNotIn("fnos-token", h.get("Cookie", ""))
+        self.assertNotIn("Cookie", h)
         self.assertNotIn("X-Trim-Token", h)
 
 
 class TestCulprit(unittest.TestCase):
-    def _dl(self, responses, **kw):
-        """按顺序喂两次响应：先「带 token」，再「不带 token」。"""
+    """归因靠「套件首页」探针：打得开 = 登录 Cookie 是好的，剩下的只可能是 pan_auth。
+
+    1.0.41 及以前是拿同一个接口连问两次（带/不带 fnos-token）比回答，
+    在新版飞牛上必然判反——网关见到 fnos-token 就整条拒，两次当然一样。
+    """
+
+    def _dl(self, page="", body="", error="", **kw):
         dl = XunleiDownloader(gateway_cfg(**kw))
-        it = iter(responses)
-
-        def fake(path, body=None, method="POST", extra=None, with_token=True):
-            item = next(it)
-            if isinstance(item, dict):
-                return item
-            return {"_raw_text": item, "_auth_failed": "token"}
-
-        dl._request = fake
+        dl._fetch_page = lambda: (page, {"body": body, "error": error, "status": 200})
         return dl
 
-    def test_same_answer_with_token_error_means_pan_auth(self):
-        # 带着和去掉 fnos-token 都回 invalid token：说明网关压根不看这个 Cookie，
-        # 拒绝来自迅雷侧，过期的是 pan_auth。1.0.11 在这里判反了。
-        dl = self._dl(["invalid token", "invalid token"])
-        culprit, ev = dl.auth_culprit()
+    def test_page_opens_means_pan_auth(self):
+        dl = self._dl(page="<html><body>ok</body></html>")
+        culprit, ev = dl.auth_culprit("invalid token")
         self.assertEqual(culprit, "pan_auth")
-        self.assertIn("一模一样", ev["reason"])
-        self.assertIn("pan_auth", ev["reason"])
+        self.assertIn("Cookie 有效", ev["reason"])
 
-    def test_same_answer_with_gateway_refusal_means_fnos_token(self):
-        # 反过来：网关自己把人挡在门外（未登录/登录页），两边一样 → 才怪 fnos-token
-        dl = self._dl(["please login", "please login"])
-        culprit, ev = dl.auth_culprit()
+    def test_page_refused_means_login_cookie(self):
+        dl = self._dl(body="invalid token", fnos_token="",
+                      fnos_cookie="fnwg_token=W; ost=O")
+        culprit, ev = dl.auth_culprit("invalid token")
         self.assertEqual(culprit, "fnos_token")
-        self.assertIn("网关侧", ev["reason"])
+        self.assertIn("失效", ev["reason"])
 
-    def test_different_answer_means_pan_auth(self):
-        dl = self._dl(["invalid token", "login required"])
-        culprit, _ = dl.auth_culprit()
-        self.assertEqual(culprit, "pan_auth")
+    def test_no_cookie_at_all(self):
+        dl = self._dl(body="invalid token", fnos_token="", fnos_cookie="")
+        culprit, ev = dl.auth_culprit("invalid token")
+        self.assertEqual(culprit, "fnos_token")
+        self.assertIn("一个飞牛登录 Cookie 都没配", ev["reason"])
 
-    def test_works_without_token_means_drop_it(self):
-        dl = self._dl(["invalid token", {"tasks": [{"target": "device#9"}]}])
-        culprit, ev = dl.auth_culprit()
-        self.assertEqual(culprit, "drop_token")
-        self.assertIn("反而通了", ev["reason"])
+    def test_legacy_only_cookie_is_named_as_the_problem(self):
+        dl = self._dl(body="invalid token", fnos_token="old", fnos_cookie="")
+        culprit, ev = dl.auth_culprit("invalid token")
+        self.assertEqual(culprit, "fnos_token")
+        self.assertIn("fnwg_token", ev["reason"])
 
-    def test_token_actually_fine_when_get_works(self):
-        # 读任务列表通、只有建任务被拒：不许赖令牌，更不能让用户去重登飞牛
-        dl = self._dl([{"tasks": [{"target": "device#1"}]}, {}])
-        culprit, ev = dl.auth_culprit()
-        self.assertEqual(culprit, "token_ok")
-        self.assertIn("令牌本身没问题", ev["reason"])
-
-    def test_panel_mode_never_compares(self):
+    def test_panel_mode_never_probes(self):
         dl = XunleiDownloader({"mode": "panel", "pan_auth": "PAN"})
-        dl._request = mock.Mock(side_effect=AssertionError("不该发请求"))
+        dl._fetch_page = mock.Mock(side_effect=AssertionError("不该发请求"))
         self.assertEqual(dl.auth_culprit("invalid token"), ("", {}))
 
-    def test_no_token_never_compares(self):
-        dl = XunleiDownloader(gateway_cfg(fnos_token=""))
-        dl._request = mock.Mock(side_effect=AssertionError("不该发请求"))
-        self.assertEqual(dl.auth_culprit("invalid token"), ("", {}))
+    def test_network_error_blames_nobody(self):
+        dl = self._dl(error="timed out")
+        culprit, ev = dl.auth_culprit("")
+        self.assertEqual(culprit, "")
+        self.assertIn("没发出去", ev["reason"])
 
-    def test_blank_second_answer_does_not_blame_anyone(self):
-        dl = self._dl(["invalid token", {"_raw_text": ""}])
-        self.assertEqual(dl.auth_culprit()[0], "")
+    def test_unexpected_body_blames_nobody(self):
+        dl = self._dl(body="502 Bad Gateway")
+        culprit, _ = dl.auth_culprit("")
+        self.assertEqual(culprit, "")
 
 
 class TestExplain(unittest.TestCase):
     def test_pan_auth_culprit_stops_blaming_fnos(self):
         msg = explain_auth("token", "fnos_gateway", gateway_cfg(), "pan_auth", 86400 * 3)
         self.assertIn("pan_auth", msg)
-        self.assertNotIn("fnos-token 失效", msg)      # 别再让用户去重登飞牛
+        self.assertNotIn("飞牛登录 Cookie 失效", msg)      # 别再让用户去重登飞牛
 
     def test_drop_token_culprit(self):
         msg = explain_auth("token", "fnos_gateway", gateway_cfg(), "drop_token")
@@ -132,7 +140,7 @@ class TestExplain(unittest.TestCase):
 
     def test_old_token_shows_age(self):
         msg = explain_auth("token", "fnos_gateway", gateway_cfg(), "", 86400 * 3)
-        self.assertIn("fnos-token 失效", msg)
+        self.assertIn("飞牛登录 Cookie 失效", msg)
         self.assertIn("3 天前", msg)
 
     def test_fresh_token_checks_port_not_relogin(self):
@@ -195,15 +203,15 @@ class TestMessagesAndProbe(unittest.TestCase):
         dl = XunleiDownloader(gateway_cfg(fnos_token_ts=time.time() - 86400 * 5))
 
         def fake(path, body=None, method="POST", extra=None, with_token=True):
-            if not with_token:
-                return {"_raw_text": "{\"code\":401}", "_auth_failed": "token"}
             return {"_raw_text": "invalid token", "_auth_failed": "token"}
 
         dl._request = fake
+        # 首页打得开 = 登录 Cookie 是好的，锅只能在 pan_auth 上
+        dl._fetch_page = lambda: ("<html>ok</html>", {"status": 200, "body": ""})
         res = dl.add(MAGNET, "某作品")
         self.assertFalse(res.ok)
         self.assertIn("pan_auth", res.message)
-        self.assertNotIn("fnos-token 失效", res.message)
+        self.assertNotIn("飞牛登录 Cookie 失效", res.message)
 
     def test_probe_exposes_culprit_and_age(self):
         dl = XunleiDownloader(gateway_cfg(fnos_token_ts=time.time() - 86400))
@@ -212,12 +220,13 @@ class TestMessagesAndProbe(unittest.TestCase):
             return {"_raw_text": "invalid token", "_auth_failed": "token"}
 
         dl._request = fake
+        dl._fetch_page = lambda: ("<html>ok</html>", {"status": 200, "body": ""})
         info = dl.probe()
         self.assertFalse(info["ok"])
         self.assertEqual(info["auth"], "token")
         self.assertEqual(info["culprit"], "pan_auth")
         self.assertIn("1 天前", info["token_age"])
-        self.assertIn("一模一样", info["auth_evidence"])
+        self.assertIn("Cookie 有效", info["auth_evidence"])
 
     def test_probe_panel_has_no_culprit(self):
         dl = XunleiDownloader({"mode": "panel", "pan_auth": "PAN"})

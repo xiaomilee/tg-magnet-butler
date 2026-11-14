@@ -234,11 +234,17 @@ def fingerprint(host, port, pan_auth="", fnos_token="", timeout=3):
     url = gateway_url(host, port, pan_auth)
     cookie = ""
     if fnos_token:
-        cookie = "fnos-token=%s" % fnos_token
+        # 传进来的可能是老版的裸 token，也可能是新版要的整条 Cookie
+        # （fnwg_token + ost）。带分号/带 fnwg_token 的按整条处理，别再套前缀——
+        # 套了就成 ``fnos-token=fnwg_token=…``，网关一样拒。
+        if ";" in fnos_token or util.fnos_cookie_has_fnwg(fnos_token):
+            cookie = util.clean_fnos_cookie(fnos_token)
+        else:
+            cookie = "fnos-token=%s" % fnos_token
     status, text = _get(url, cookie=cookie, timeout=timeout)
     state, detail = classify(status, text)
     if state == "need_token" and not fnos_token:
-        detail = "需要飞牛登录态 fnos-token（网关鉴权）"
+        detail = "需要飞牛登录 Cookie（新版飞牛要 fnwg_token + ost）"
     shown = url.replace(pan_auth, mask(pan_auth)) if pan_auth else url
     return {"mode": "fnos_gateway", "host": host, "port": port, "url": shown,
             "status": status, "state": state, "detail": detail,

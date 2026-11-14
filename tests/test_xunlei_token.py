@@ -63,7 +63,7 @@ class TestExplain(unittest.TestCase):
     def test_gateway_with_expired_fnos_token(self):
         msg = explain_auth("token", "fnos_gateway",
                            {"pan_auth": "abc", "fnos_token": "t"})
-        self.assertIn("fnos-token 失效", msg)
+        self.assertIn("飞牛登录 Cookie 失效", msg)
 
     def test_account_message_mentions_login(self):
         self.assertIn("扫码登录", explain_auth("account", "panel", {}))
@@ -197,10 +197,11 @@ class TestPipelineHeal(unittest.TestCase):
         first = self._fake(self._fail())
         with mock.patch("tmb.downloaders.chain", return_value=[first]), \
                 mock.patch("tmb.xunlei_detect.scan", return_value=rep), \
-                mock.patch("tmb.downloaders.make") as make:
+                mock.patch.object(Pipeline, "_pan_auth_from_page",
+                                  return_value=("", "")):
             out = self.pipe.submit(self._item())
         self.assertFalse(out["ok"])
-        make.assert_not_called()
+        self.assertEqual(first.add.call_count, 1)      # 没再补投一次
         self.assertEqual(self.cfg.data["download"]["xunlei"]["pan_auth"], "OLD")
 
     def test_same_token_does_not_retry(self):
@@ -210,10 +211,11 @@ class TestPipelineHeal(unittest.TestCase):
         first = self._fake(self._fail())
         with mock.patch("tmb.downloaders.chain", return_value=[first]), \
                 mock.patch("tmb.xunlei_detect.scan", return_value=rep), \
-                mock.patch("tmb.downloaders.make") as make:
+                mock.patch.object(Pipeline, "_pan_auth_from_page",
+                                  return_value=("", "")):
             out = self.pipe.submit(self._item())
         self.assertFalse(out["ok"])
-        make.assert_not_called()
+        self.assertEqual(first.add.call_count, 1)      # 令牌没变，别白投第二次
 
     def test_heal_only_once(self):
         rep = {"best": {"state": "ok", "mode": "fnos_gateway",

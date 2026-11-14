@@ -12,11 +12,15 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (__version__, downloaders, intake, library, log as logmod,
-               netdiag, nyaa, proxychan, xunlei_detect)
+               netdiag, nyaa, proxychan, util, xunlei_detect)
 from .config import DEFAULT_CONFIG
 from .pipeline import Pipeline
 
 log = logging.getLogger("tmb.web")
+
+# 新版飞牛（迅雷套件 3.23.5 起）鉴权靠这几个 Cookie；
+# 老的 fnos-token 反倒一出现就被整条拒，所以它**不能**进这一组。
+_LOGIN_COOKIE_KEYS = ("fnwg_token", "ost", "osrt", "xtoken", "xla_ci")
 
 
 class AppContext(object):
@@ -29,8 +33,10 @@ class AppContext(object):
         self.bot = bot
         self.ui_dir = ui_dir
         self.started_at = time.time()
-        # 从飞牛桌面打开本面板时，浏览器的 fnos-token 会随请求带进来。
+        # 从飞牛桌面打开本面板时，浏览器的登录 Cookie 会随请求带进来。
         # 记住它，就能直接拿去调官方迅雷的网关接口，省掉手抄令牌。
+        # 新版飞牛要的是整条（fnwg_token + ost），老版才是单个 fnos-token。
+        self.fnos_cookie = ""
         self.fnos_token = ""
         self.fnos_token_seen = False     # 这次有没有从浏览器里读到（区分「没读到」和「读到空」）
         self.fnos_port = 0
@@ -46,15 +52,21 @@ class AppContext(object):
 
     def note_fnos_token(self, headers):
         tok = ""
+        jar = []
         try:
             for raw in (headers.get("Cookie") or "").split(";"):
                 if "=" not in raw:
                     continue
                 key, val = raw.split("=", 1)
-                if key.strip().lower() in ("fnos-token", "fnos_token", "trim-token",
-                                          "connect-token", "fnos-session"):
-                    if val.strip():
-                        tok = val.strip()
+                name, val = key.strip(), val.strip()
+                if not val:
+                    continue
+                low = name.lower()
+                if low in _LOGIN_COOKIE_KEYS:
+                    jar.append("%s=%s" % (name, val))
+                elif low in ("fnos-token", "fnos_token", "trim-token",
+                             "connect-token", "fnos-session"):
+                    tok = val
             for name in ("X-Trim-Token", "X-Fnos-Token", "Fnos-Token"):
                 val = headers.get(name)
                 if val:
@@ -72,17 +84,29 @@ class AppContext(object):
                     self.fnos_port = port
         except Exception:
             pass
+        # 只要同一台机器，浏览器访问面板时会把 192.168.2.6 的 Cookie 一起带过来
+        # （Cookie 按域走、不分端口），所以从这里就能白捡到 fnwg_token + ost。
+        cookie = util.clean_fnos_cookie("; ".join(jar)) if jar else ""
         # 「这一次请求」有没有读到浏览器登录态。每次请求都重算：
         # 用户可能这次从飞牛桌面进（带 Cookie），下次直接输 IP 进（不带），
         # 面板上那句「没读到，请从飞牛桌面打开」要跟着变。
-        self.fnos_token_seen = bool(tok)
+        self.fnos_token_seen = bool(cookie or tok)
+        changed = False
+        if cookie and cookie != self.fnos_cookie:
+            self.fnos_cookie = cookie
+            changed = True
         if tok and tok != self.fnos_token:
             self.fnos_token = tok
-            self._remember_fnos_token(tok)
-        return self.fnos_token
+            changed = True
+        if changed:
+            self._remember_login(self.fnos_cookie, self.fnos_token)
+        return self.fnos_cookie or self.fnos_token
 
-    def _remember_fnos_token(self, tok):
+    def _remember_login(self, cookie, tok):
         """把浏览器带来的登录态写进配置。
+
+        新版飞牛存 ``fnos_cookie``（fnwg_token + ost），老版仍存 ``fnos_token``。
+        两个都存也无妨：发请求时以 fnos_cookie 为准，绝不会再拼 fnos-token 出去。
 
         只留内存是不够的：Telegram、定时任务、失败重试走的都是配置里的副本，
         用户重登飞牛再打开面板，机器人却还拿着几天前的令牌，于是永远「鉴权失败」。
@@ -91,22 +115,26 @@ class AppContext(object):
         xcfg = ((self.cfg.data.get("download") or {}).get("xunlei") or {})
         if (xcfg.get("mode") or "fnos_gateway").lower() != "fnos_gateway":
             return False
-        if str(xcfg.get("fnos_token") or "").strip() == tok:
+        patch = {}
+        if cookie and str(xcfg.get("fnos_cookie") or "").strip() != cookie:
+            patch["fnos_cookie"] = cookie
+        if tok and str(xcfg.get("fnos_token") or "").strip() != tok:
+            patch["fnos_token"] = tok
+        if not patch:
             return False
+        patch["fnos_token_ts"] = int(time.time())
+        patch["fnos_token_source"] = "browser"
         try:
-            self.cfg.apply_patch({"download": {"xunlei": {
-                "fnos_token": tok,
-                "fnos_token_ts": int(time.time()),
-                "fnos_token_source": "browser",
-            }}})
-            log.info("已用浏览器当前登录态更新 fnos-token（%d 字符）", len(tok))
+            self.cfg.apply_patch({"download": {"xunlei": patch}})
+            log.info("已用浏览器当前登录态更新（%s）",
+                     "fnwg_token 整条 Cookie" if "fnos_cookie" in patch else "fnos-token")
             # 迅雷还没连上、而这串新登录态可能正好是缺的那把钥匙：后台补一次自动连接。
             # 不阻塞这次请求，用户刷新一下就能看到「已连接」。
             if not (self.xunlei_conn or {}).get("ok"):
                 threading.Thread(target=self._auto_reconnect, daemon=True).start()
             return True
         except Exception:
-            log.exception("写入 fnos-token 失败，本次仅在内存里使用")
+            log.exception("写入飞牛登录态失败，本次仅在内存里使用")
             return False
 
     def _auto_reconnect(self):
@@ -114,7 +142,8 @@ class AppContext(object):
         if not self._reconnect_lock.acquire(False):
             return
         try:
-            res = xunlei_detect.autoconnect(self.cfg, fnos_token=self.fnos_token,
+            res = xunlei_detect.autoconnect(self.cfg,
+                                            fnos_token=self.fnos_cookie or self.fnos_token,
                                             fnos_port=self.fnos_port or None)
             port = res.get("port") or 0
             notes = (res.get("report") or {}).get("notes") or []
@@ -140,11 +169,12 @@ class AppContext(object):
         return {
             "mode": xcfg.get("mode") or "",
             "has_token": bool(str(xcfg.get("fnos_token") or "").strip()),
+            "has_cookie": bool(str(xcfg.get("fnos_cookie") or "").strip()),
             "has_pan_auth": bool(str(xcfg.get("pan_auth") or "").strip()),
             "source": xcfg.get("fnos_token_source") or "",
             "ts": ts,
             "age": age,
-            "browser_cookie": bool(self.fnos_token),
+            "browser_cookie": bool(self.fnos_cookie or self.fnos_token),
             "browser_cookie_seen": bool(self.fnos_token_seen),
             "port": self.fnos_port or 0,
         }
@@ -313,7 +343,12 @@ class Handler(BaseHTTPRequestHandler):
                                         self.ctx.cfg.get("telegram.proxy") or "")
                 if not inst:
                     return self._error("未知下载器：%s" % name)
-                return self._json(inst.probe())
+                probe = inst.probe()
+                if probe.get("pan_auth_new"):
+                    # 探测时顺手从套件首页换到了新令牌，别用完就丢
+                    self.ctx.cfg.apply_patch({"download": {"xunlei": {
+                        "pan_auth": probe["pan_auth_new"]}}})
+                return self._json(probe)
             if path == "/api/bot/restart":
                 if self.ctx.bot:
                     self.ctx.bot.stop()
@@ -662,7 +697,8 @@ class Handler(BaseHTTPRequestHandler):
         即使端口看起来没变也重扫一遍，省得用户为了换一次令牌去重启服务。
         """
         res = xunlei_detect.autoconnect(self.ctx.cfg,
-                                        fnos_token=self.ctx.fnos_token,
+                                        fnos_token=(self.ctx.fnos_cookie
+                                                    or self.ctx.fnos_token),
                                         fnos_port=self.ctx.fnos_port or None,
                                         force=force)
         rep = res["report"]
@@ -672,6 +708,11 @@ class Handler(BaseHTTPRequestHandler):
             inst = downloaders.make("xunlei", self.ctx.cfg.data,
                                     self.ctx.cfg.get("telegram.proxy") or "")
             probe = inst.probe() if inst else {}
+            if probe.get("pan_auth_new"):
+                # 首页里读到了新令牌：落盘，别只在内存里用一次
+                self.ctx.cfg.apply_patch({"download": {"xunlei": {
+                    "pan_auth": probe["pan_auth_new"]}}})
+                log.info("已把套件首页里读到的 pan_auth 写进配置")
             res["ok"] = bool(probe.get("ok"))
             if res["ok"]:
                 note = "已连上飞牛官方迅雷套件（端口 %s），配置已更新" % res["port"] \

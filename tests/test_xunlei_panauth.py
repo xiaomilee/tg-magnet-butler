@@ -87,7 +87,7 @@ class TestExplain(unittest.TestCase):
         msg = explain_auth("token", "fnos_gateway", cfg, "pan_auth")
         self.assertIn("pan_auth", msg)
         self.assertIn("过期", msg)
-        self.assertNotIn("fnos-token 失效", msg)
+        self.assertNotIn("飞牛登录 Cookie 失效", msg)
         self.assertIn("迅雷套件", msg)          # 给出可执行的下一步
 
     def test_expired_jwt_reported_even_without_culprit(self):
@@ -95,7 +95,7 @@ class TestExplain(unittest.TestCase):
         cfg = gateway_cfg(pan_auth=make_jwt({"exp": int(time.time()) - 86400}))
         msg = explain_auth("token", "fnos_gateway", cfg, "")
         self.assertIn("pan_auth", msg)
-        self.assertNotIn("fnos-token 失效", msg)
+        self.assertNotIn("飞牛登录 Cookie 失效", msg)
 
     def test_still_talks_about_fnos_token_when_jwt_is_fine(self):
         cfg = gateway_cfg()                    # pan_auth 未过期
@@ -127,7 +127,7 @@ class TestProbe(unittest.TestCase):
         res = dl.add(MAGNET, "标题", {"target": "device#1", "_no_folder": True})
         self.assertFalse(res.ok)
         self.assertIn("pan_auth", res.message)
-        self.assertNotIn("fnos-token 失效", res.message)
+        self.assertNotIn("飞牛登录 Cookie 失效", res.message)
 
 
 class TestDetectClassify(unittest.TestCase):
@@ -149,11 +149,12 @@ class TestFnosPortGuess(unittest.TestCase):
 
     def _ctx(self, web_port):
         class Fake(object):
+            fnos_cookie = ""
             fnos_token = ""
             fnos_token_seen = False
             fnos_port = 0
 
-            def _remember_fnos_token(self, tok):
+            def _remember_login(self, cookie, tok):
                 pass
 
         Fake.web_port = web_port
@@ -168,6 +169,23 @@ class TestFnosPortGuess(unittest.TestCase):
         ctx = self._ctx(8470)
         AppContext.note_fnos_token(ctx, {"Host": "192.168.1.2:5666"})
         self.assertEqual(ctx.fnos_port, 5666)
+
+    def test_new_cookie_is_picked_up_from_browser(self):
+        """新版飞牛只发 fnwg_token + ost：打开面板就该被顺手记下来。"""
+        ctx = self._ctx(8470)
+        AppContext.note_fnos_token(ctx, {"Cookie": (
+            "fnwg_token=aaa; ost=bbb; xtoken=ccc; language=zh-CN")})
+        self.assertIn("fnwg_token=aaa", ctx.fnos_cookie)
+        self.assertIn("ost=bbb", ctx.fnos_cookie)
+        self.assertNotIn("language", ctx.fnos_cookie)
+
+    def test_legacy_cookie_never_enters_new_field(self):
+        """老的 fnos-token 不能混进 fnos_cookie，否则网关一律拒。"""
+        ctx = self._ctx(8470)
+        AppContext.note_fnos_token(ctx, {"Cookie": (
+            "fnos-token=old; fnwg_token=aaa; ost=bbb")})
+        self.assertNotIn("fnos-token=old", ctx.fnos_cookie)
+        self.assertEqual(ctx.fnos_token, "old")
 
 
 if __name__ == "__main__":

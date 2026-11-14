@@ -309,8 +309,8 @@
           只接飞牛应用中心里的官方「迅雷」：启动时会自己侦测网关端口、复用当前飞牛登录态，
           不需要选模式或填端口；连不上就点「立即重连」。</p>
         <div class="form-grid">
-          <label class="field wide"><span>pan_auth 令牌<em>只填 JWT 本身（形如 eyJ…）；粘成整条 device/info/watch 地址也没关系，保存时会自动掐出里面那段</em></span><input id="xPanAuth" type="password" placeholder="自动侦测会尽量帮你抓；抓不到再手填"/></label>
-          <label class="field wide"><span>fnos-token（从飞牛登录态自动获取）</span><input id="xFnToken" type="password" /></label>
+          <label class="field wide"><span>pan_auth 令牌<em>只填 JWT 本身（形如 eyJ…）；粘成整条 device/info/watch 地址也没关系，保存时会自动掐出里面那段。连不上时程序会自己从迅雷套件首页重抓，一般不用手填</em></span><input id="xPanAuth" type="password" placeholder="自动侦测会尽量帮你抓；抓不到再手填"/></label>
+          <label class="field wide"><span>飞牛登录 Cookie<em>新版飞牛要的是 Cookie 里的 fnwg_token + ost（老的 fnos-token 已不被接受）。浏览器 F12 → Network → 点一条 drive/v1 请求 → 复制 Cookie 整行粘进来即可，程序会自动剔掉让网关拒收的那几项；从飞牛桌面点开本面板也会自动带上</em></span><input id="xFnToken" type="password" placeholder="整条粘进来就行，不用自己挑"/></label>
           <label class="field"><span>设备空间 target</span><input id="xTarget" placeholder="留空自动解析"/></label>
           <label class="field"><span>下载目录 id</span><input id="xFolder" placeholder="留空 = 迅雷默认目录"/></label>
           <div class="field wide file-filter" id="xFilterBox">
